@@ -240,8 +240,49 @@ export function useSlashCommand(deps: SlashCommandDeps) {
         // /yolo maps to the status-bar YOLO control — a per-session approval
         // bypass, same scope as the TUI's Shift+Tab. With no session yet we arm
         // it locally; the session-create path applies it on the first message.
-        yolo: async ({ sessionHint }) => {
-          const sid = sessionHint || activeSessionIdRef.current
+        yolo: async ctx => {
+          const mode = ctx.arg.trim().toLowerCase()
+          const sid = ctx.sessionHint || activeSessionIdRef.current
+
+          if (mode && mode !== 'status') {
+            if (sid) {
+              appendSessionTextMessage(sid, 'system', '/yolo [status]')
+            } else {
+              notify({ kind: 'error', message: '/yolo [status]' })
+            }
+
+            return
+          }
+
+          if (mode === 'status') {
+            const renderStatus = (text: string, isError = false) => {
+              if (sid) {
+                appendSessionTextMessage(sid, 'system', ctx.recordInput ? slashStatusText(ctx.command, text) : text)
+              } else {
+                notify({ kind: isError ? 'error' : 'success', message: text })
+              }
+            }
+
+            if (!sid) {
+              renderStatus($yoloActive.get() ? copy.yoloStatusOn(false) : copy.yoloStatusOff(false))
+
+              return
+            }
+
+            try {
+              const result = await requestGateway<{ value?: string }>('config.get', {
+                key: 'yolo',
+                session_id: sid
+              })
+
+              renderStatus(result?.value === '1' ? copy.yoloStatusOn(true) : copy.yoloStatusOff(true))
+            } catch {
+              renderStatus(copy.yoloStatusUnavailable, true)
+            }
+
+            return
+          }
+
           const next = !$yoloActive.get()
 
           if (!sid) {

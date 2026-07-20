@@ -238,6 +238,20 @@ async def test_auto_registered_command_with_args(adapter):
 
 
 @pytest.mark.asyncio
+async def test_auto_registered_yolo_dispatches_status_argument(adapter):
+    adapter._run_simple_slash = AsyncMock()
+    adapter._register_slash_commands()
+
+    yolo_cmd = adapter._client.tree.commands["yolo"]
+    interaction = SimpleNamespace()
+    await yolo_cmd.callback(interaction, args="status")
+
+    adapter._run_simple_slash.assert_awaited_once_with(
+        interaction, "/yolo status"
+    )
+
+
+@pytest.mark.asyncio
 async def test_auto_registers_plugin_commands_for_discord(adapter):
     """Plugin slash commands should appear as native Discord app commands."""
     adapter._run_simple_slash = AsyncMock()

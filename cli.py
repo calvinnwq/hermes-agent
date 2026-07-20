@@ -8968,7 +8968,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         elif canonical == "footer":
             self._handle_footer_command(cmd_original)
         elif canonical == "yolo":
-            self._toggle_yolo()
+            self._handle_yolo_command(cmd_original)
         elif canonical == "reasoning":
             self._handle_reasoning_command(cmd_original)
         elif canonical == "fast":
@@ -9693,6 +9693,30 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # field after the failure.
         session_key = getattr(self, "session_id", None) or "default"
         return is_session_yolo_enabled(session_key)
+
+    def _handle_yolo_command(self, command: str) -> None:
+        """Handle the interactive ``/yolo`` toggle and read-only status query."""
+        parts = command.strip().split(None, 1)
+        argument = parts[1].strip().lower() if len(parts) > 1 else ""
+
+        if not argument:
+            self._toggle_yolo()
+            return
+        if argument != "status":
+            _cprint("/yolo [status]")
+            return
+
+        from hermes_cli.colors import Colors as _Colors
+        from tools.approval import is_approval_bypass_active
+
+        session_key = getattr(self, "session_id", None) or "default"
+        active = is_approval_bypass_active(session_key)
+        state = (
+            f"{_Colors.BOLD}{_Colors.GREEN}ON{_Colors.RESET}"
+            if active
+            else f"{_Colors.BOLD}{_Colors.RED}OFF{_Colors.RESET}"
+        )
+        _cprint(f"  YOLO approval bypass {state} for this session.")
 
     def _toggle_yolo(self):
         """Toggle YOLO mode — skip all dangerous command approval prompts.

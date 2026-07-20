@@ -3197,10 +3197,23 @@ class GatewaySlashCommandsMixin:
         from tools.approval import (
             disable_session_yolo,
             enable_session_yolo,
+            is_approval_bypass_active,
             is_session_yolo_enabled,
         )
 
+        args = event.get_command_args().strip()
+        if args and args.lower() != "status":
+            return EphemeralReply("/yolo [status]")
+
         session_key = self._session_key_for_source(event.source)
+        if args:
+            message_key = (
+                "gateway.yolo.status_enabled"
+                if is_approval_bypass_active(session_key)
+                else "gateway.yolo.status_disabled"
+            )
+            return EphemeralReply(t(message_key))
+
         current = is_session_yolo_enabled(session_key)
         if current:
             disable_session_yolo(session_key)

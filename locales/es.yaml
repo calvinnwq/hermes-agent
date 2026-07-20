@@ -405,6 +405,8 @@ gateway:
   yolo:
     disabled:                   "⚠️ Modo YOLO **DESACTIVADO** en esta sesión — los comandos peligrosos requerirán aprobación."
     enabled:                    "⚡ Modo YOLO **ACTIVADO** en esta sesión — todos los comandos se aprueban automáticamente. Úsalo con precaución."
+    status_enabled:             "⚡ La omisión de aprobación para comandos peligrosos está **ACTIVADA**."
+    status_disabled:            "⚠️ La omisión de aprobación para comandos peligrosos está **DESACTIVADA**."
 
   shared:
     session_db_unavailable:      "Base de datos de sesiones no disponible."

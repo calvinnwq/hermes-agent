@@ -74,7 +74,7 @@ Hermes 有两个斜杠命令入口，均由 `hermes_cli/commands.py` 中的中�
 | `/skin` | 显示或更改显示皮肤/主题 |
 | `/statusbar`（别名：`/sb`） | 切换上下文/模型状态栏的显示与隐藏 |
 | `/voice [on\|off\|tts\|status]` | 切换 CLI 语音模式和语音播放。录音使用 `voice.record_key`（默认：`Ctrl+B`）。 |
-| `/yolo` | 切换 YOLO 模式——跳过所有危险命令审批提示。 |
+| `/yolo [status]` | 切换 YOLO 模式——跳过所有危险命令审批提示。`/yolo status` 只读显示当前状态。 |
 | `/footer [on\|off\|status]` | 切换最终回复中的 gateway 运行时元数据页脚（显示模型、工具调用次数、耗时）。 |
 | `/busy [queue\|steer\|interrupt\|status]` | 仅限 CLI：控制 Hermes 工作时按下 Enter 的行为——将新消息加入队列、中途引导，或立即中断。 |
 | `/indicator [kaomoji\|emoji\|unicode\|ascii]` | 仅限 CLI：选择 TUI 忙碌指示器样式。 |
@@ -233,7 +233,7 @@ hermes config set model.aliases.grok x-ai/grok-4
 | `/kanban <action>` | 从聊天中操作多 profile、多项目协作看板——参数与 CLI 完全一致。绕过运行中 agent 的保护，因此 `/kanban unblock t_abc`、`/kanban comment t_abc "…"`、`/kanban list --mine`、`/kanban boards switch <slug>` 等均可在轮次进行中使用。`/kanban create …` 会自动将发起聊天订阅到新任务的终态事件。见 [Kanban 斜杠命令](/user-guide/features/kanban#kanban-slash-command)。 |
 | `/platform <list\|pause\|resume> [name]` | 直接在聊天中操作正在运行的 gateway 平台。`/platform list` 列出所有适配器及其状态（运行中、熔断器暂停、手动暂停）；`/platform pause <name>` 停止向该适配器分发新消息但不卸载它；`/platform resume <name>` 重新启用它，并在上游恢复健康后清除已触发的熔断器。 |
 | `/reload-mcp`（别名：`/reload_mcp`） | 从配置重新加载 MCP 服务器。 |
-| `/yolo` | 切换 YOLO 模式——跳过所有危险命令审批提示。 |
+| `/yolo [status]` | 切换 YOLO 模式——跳过所有危险命令审批提示。`/yolo status` 只读显示当前状态。 |
 | `/commands [page]` | 浏览所有命令和 skill（分页）。 |
 | `/approve [session\|always]` | 审批并执行待处理的危险命令。`session` 仅为本次会话审批；`always` 添加到永久白名单。 |
 | `/deny` | 拒绝待处理的危险命令。 |

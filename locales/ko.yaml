@@ -408,6 +408,8 @@ Future messages in this room will use that transcript until `/reset` or another 
   yolo:
     disabled:                   "⚠️ 이 세션에서 YOLO 모드 **꺼짐** — 위험한 명령은 승인이 필요합니다."
     enabled:                    "⚡ 이 세션에서 YOLO 모드 **켜짐** — 모든 명령이 자동 승인됩니다. 주의해서 사용하세요."
+    status_enabled:             "⚡ 위험 명령 승인 우회가 **켜짐** 상태입니다."
+    status_disabled:            "⚠️ 위험 명령 승인 우회가 **꺼짐** 상태입니다."
 
   shared:
     session_db_unavailable:      "세션 데이터베이스를 사용할 수 없습니다."

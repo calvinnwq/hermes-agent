@@ -2163,6 +2163,9 @@ export interface Translations {
     yoloArmed: string
     yoloOff: string
     yoloSystem: (active: boolean) => string
+    yoloStatusOn: (sessionScoped: boolean) => string
+    yoloStatusOff: (sessionScoped: boolean) => string
+    yoloStatusUnavailable: string
     yoloTitle: string
     yoloToggleFailed: string
     profileStatus: (current: string) => string

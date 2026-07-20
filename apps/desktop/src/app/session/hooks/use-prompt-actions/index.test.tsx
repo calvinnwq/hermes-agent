@@ -5,7 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { textPart } from '@/lib/chat-messages'
 import { $composerAttachments, $composerDraft, type ComposerAttachment, setComposerDraft } from '@/store/composer'
-import { $busy, $connection, $messages, $sessions, $turnStartedAt, setSessions } from '@/store/session'
+import { $notifications, clearNotifications } from '@/store/notifications'
+import {
+  $busy,
+  $connection,
+  $messages,
+  $sessions,
+  $turnStartedAt,
+  $yoloActive,
+  setSessions,
+  setYoloActive
+} from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
 import type { SubmitTextOptions } from './utils'
@@ -177,6 +187,51 @@ function Harness({
   return null
 }
 
+type YoloTestGateway = (method: string, params?: Record<string, unknown>) => Promise<unknown>
+
+async function runYoloCommand(
+  command: string | string[],
+  {
+    activeSession = true,
+    gateway,
+    initialState = false,
+    response = {}
+  }: {
+    activeSession?: boolean
+    gateway?: YoloTestGateway
+    initialState?: boolean
+    response?: unknown
+  } = {}
+) {
+  const states: Record<string, unknown>[] = []
+  const createBackendSessionForSend = vi.fn(async () => RUNTIME_SESSION_ID)
+
+  const requestGateway = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    return (gateway ? await gateway(method, params) : response) as never
+  })
+
+  setYoloActive(initialState)
+
+  let handle: HarnessHandle | null = null
+  await actRender(
+    <Harness
+      activeSessionId={activeSession ? undefined : null}
+      createBackendSessionForSend={createBackendSessionForSend}
+      onReady={value => (handle = value)}
+      onSeedState={state => states.push(state)}
+      refreshSessions={async () => undefined}
+      requestGateway={requestGateway}
+      storedSessionId={activeSession ? undefined : null}
+    />
+  )
+
+  for (const text of Array.isArray(command) ? command : [command]) {
+    await handle!.submitText(text)
+  }
+
+  return { createBackendSessionForSend, requestGateway, states }
+}
+
 describe('usePromptActions /title', () => {
   beforeEach(() => {
     setSessions(() => [sessionInfo()])
@@ -282,6 +337,8 @@ describe('usePromptActions slash.exec dispatch payloads', () => {
   afterEach(() => {
     cleanup()
     $busy.set(false)
+    setYoloActive(false)
+    clearNotifications()
     vi.restoreAllMocks()
   })
 
@@ -384,6 +441,99 @@ describe('usePromptActions slash.exec dispatch payloads', () => {
       .join('\n')
 
     expect(renderedText).not.toContain('empty slash command')
+  })
+
+  it.each([
+    { backendValue: '1', initialState: false, status: 'ON' },
+    { backendValue: '0', initialState: true, status: 'OFF' }
+  ])('reports /yolo status $status without changing YOLO state', async ({ backendValue, initialState, status }) => {
+    const { requestGateway, states } = await runYoloCommand('/yolo status', {
+      initialState,
+      response: { value: backendValue }
+    })
+
+    expect(requestGateway).toHaveBeenCalledWith('config.get', {
+      key: 'yolo',
+      session_id: RUNTIME_SESSION_ID
+    })
+    expect(requestGateway).not.toHaveBeenCalledWith('config.set', expect.anything())
+    expect(requestGateway).not.toHaveBeenCalledWith('slash.exec', expect.anything())
+    expect($yoloActive.get()).toBe(initialState)
+    expect(JSON.stringify(states)).toContain(`YOLO status is ${status} for this session.`)
+  })
+
+  it('reports fresh-draft /yolo status locally without creating a session', async () => {
+    const { createBackendSessionForSend, requestGateway } = await runYoloCommand('/yolo status', {
+      activeSession: false,
+      initialState: true,
+      response: { value: '0' }
+    })
+
+    expect(createBackendSessionForSend).not.toHaveBeenCalled()
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect($yoloActive.get()).toBe(true)
+    expect($notifications.get()[0]).toMatchObject({ kind: 'success', message: 'YOLO status is ON.' })
+  })
+
+  it('reports unavailable /yolo status without falling back to a mutating path', async () => {
+    const { requestGateway, states } = await runYoloCommand('/yolo status', {
+      gateway: async () => {
+        throw new Error('unknown method config.get')
+      },
+      initialState: true
+    })
+
+    expect(requestGateway).toHaveBeenCalledOnce()
+    expect(requestGateway).toHaveBeenCalledWith('config.get', {
+      key: 'yolo',
+      session_id: RUNTIME_SESSION_ID
+    })
+    expect(requestGateway).not.toHaveBeenCalledWith('config.set', expect.anything())
+    expect(requestGateway).not.toHaveBeenCalledWith('slash.exec', expect.anything())
+    expect($yoloActive.get()).toBe(true)
+    expect(JSON.stringify(states)).toContain(
+      '/yolo status is unavailable on this backend. Upgrade Hermes Agent to use this read-only query.'
+    )
+  })
+
+  it('rejects unknown /yolo arguments without toggling', async () => {
+    const { requestGateway, states } = await runYoloCommand('/yolo nope', { initialState: true })
+
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect($yoloActive.get()).toBe(true)
+    expect(JSON.stringify(states)).toContain('/yolo [status]')
+  })
+
+  it('rejects unknown fresh-draft /yolo arguments without creating a session', async () => {
+    const { createBackendSessionForSend, requestGateway } = await runYoloCommand('/yolo nope', {
+      activeSession: false,
+      initialState: true
+    })
+
+    expect(createBackendSessionForSend).not.toHaveBeenCalled()
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect($yoloActive.get()).toBe(true)
+    expect($notifications.get()[0]).toMatchObject({ kind: 'error', message: '/yolo [status]' })
+  })
+
+  it('keeps bare /yolo on the existing session toggle path and messages', async () => {
+    const { requestGateway, states } = await runYoloCommand(['/yolo', '/yolo'], {
+      gateway: async (_method, params) => ({ value: params?.value })
+    })
+
+    expect(requestGateway).toHaveBeenNthCalledWith(1, 'config.set', {
+      key: 'yolo',
+      session_id: RUNTIME_SESSION_ID,
+      value: '1'
+    })
+    expect(requestGateway).toHaveBeenNthCalledWith(2, 'config.set', {
+      key: 'yolo',
+      session_id: RUNTIME_SESSION_ID,
+      value: '0'
+    })
+    expect($yoloActive.get()).toBe(false)
+    expect(JSON.stringify(states)).toContain('"text":"YOLO on for this session"')
+    expect(JSON.stringify(states)).toContain('"text":"YOLO off for this session"')
   })
 
   it('restores a degenerate slash payload to the composer instead of losing it', async () => {

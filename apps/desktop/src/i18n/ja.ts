@@ -2516,6 +2516,12 @@ export const ja = defineLocale({
     yoloArmed: 'このチャットでは YOLO が有効になっています',
     yoloOff: 'YOLO オフ',
     yoloSystem: active => `このセッションの YOLO ${active ? 'オン' : 'オフ'}`,
+    yoloStatusOn: sessionScoped =>
+      sessionScoped ? 'このセッションの YOLO ステータスはオンです。' : 'YOLO ステータスはオンです。',
+    yoloStatusOff: sessionScoped =>
+      sessionScoped ? 'このセッションの YOLO ステータスはオフです。' : 'YOLO ステータスはオフです。',
+    yoloStatusUnavailable:
+      '/yolo status はこのバックエンドでは利用できません。この読み取り専用クエリを使用するには Hermes Agent をアップグレードしてください。',
     yoloTitle: 'YOLO',
     yoloToggleFailed: 'YOLO を切り替えられませんでした',
     profileStatus: current =>

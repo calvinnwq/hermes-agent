@@ -57,6 +57,25 @@ class TestApprovalModeParsing:
         assert _normalize_approval_mode(True) == "manual"
 
 
+class TestApprovalBypass:
+    def test_explicit_session_uses_that_sessions_yolo_state(self, monkeypatch):
+        enabled_session = "test-bypass-enabled"
+        other_session = "test-bypass-other"
+        monkeypatch.setattr(approval_module, "_YOLO_MODE_FROZEN", False)
+        monkeypatch.setattr(approval_module, "_get_approval_mode", lambda: "manual")
+        approval_module.clear_session(enabled_session)
+        approval_module.clear_session(other_session)
+
+        try:
+            approval_module.enable_session_yolo(enabled_session)
+
+            assert approval_module.is_approval_bypass_active(enabled_session) is True
+            assert approval_module.is_approval_bypass_active(other_session) is False
+        finally:
+            approval_module.clear_session(enabled_session)
+            approval_module.clear_session(other_session)
+
+
 class TestSmartApproval:
     def test_smart_is_the_default_approval_mode(self):
         from hermes_cli.config import DEFAULT_CONFIG

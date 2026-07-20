@@ -408,6 +408,8 @@ Future messages in this room will use that transcript until `/reset` or another 
   yolo:
     disabled:                   "⚠️ Режим YOLO для этого сеанса **ОТКЛЮЧЁН** — опасные команды потребуют одобрения."
     enabled:                    "⚡ Режим YOLO для этого сеанса **ВКЛЮЧЁН** — все команды одобряются автоматически. Используйте с осторожностью."
+    status_enabled:             "⚡ Обход подтверждений опасных команд **ВКЛЮЧЁН**."
+    status_disabled:            "⚠️ Обход подтверждений опасных команд **ОТКЛЮЧЁН**."
 
   shared:
     session_db_unavailable:      "База данных сеансов недоступна."

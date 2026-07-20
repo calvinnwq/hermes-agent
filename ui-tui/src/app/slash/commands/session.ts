@@ -470,7 +470,24 @@ export const sessionCommands: SlashCommand[] = [
   {
     help: 'toggle yolo mode (per-session approvals)',
     name: 'yolo',
-    run: (_arg, ctx) => {
+    run: (arg, ctx) => {
+      const mode = arg.trim().toLowerCase()
+
+      if (mode && mode !== 'status') {
+        return ctx.transcript.sys('/yolo [status]')
+      }
+
+      if (mode === 'status') {
+        return ctx.gateway
+          .rpc<ConfigGetValueResponse>('config.get', { key: 'yolo', session_id: ctx.sid })
+          .then(
+            ctx.guarded<ConfigGetValueResponse>(r =>
+              ctx.transcript.sys(r.value === '1' ? 'YOLO approval bypass ON.' : 'YOLO approval bypass OFF.')
+            )
+          )
+          .catch(ctx.guardedErr)
+      }
+
       ctx.gateway
         .rpc<ConfigSetResponse>('config.set', { key: 'yolo', session_id: ctx.sid })
         .then(ctx.guarded<ConfigSetResponse>(r => ctx.transcript.sys(`yolo ${r.value === '1' ? 'on' : 'off'}`)))

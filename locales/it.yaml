@@ -408,6 +408,8 @@ Future messages in this room will use that transcript until `/reset` or another 
   yolo:
     disabled:                   "⚠️ Modalità YOLO **OFF** per questa sessione — i comandi pericolosi richiederanno approvazione."
     enabled:                    "⚡ Modalità YOLO **ON** per questa sessione — tutti i comandi auto-approvati. Usa con cautela."
+    status_enabled:             "⚡ L'aggiramento dell'approvazione per i comandi pericolosi è **ATTIVO**."
+    status_disabled:            "⚠️ L'aggiramento dell'approvazione per i comandi pericolosi è **DISATTIVATO**."
 
   shared:
     session_db_unavailable:      "Database delle sessioni non disponibile."

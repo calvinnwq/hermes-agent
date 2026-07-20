@@ -31,6 +31,7 @@ import pytest
 
 import tools.approval as approval_module
 from cli import HermesCLI
+from hermes_cli.colors import Colors
 
 
 SESSION_KEY = "test-cli-yolo-session"
@@ -122,6 +123,59 @@ class TestToggleYoloIsSessionScoped:
         finally:
             approval_module.clear_session("session-yolo-a")
             approval_module.clear_session("session-yolo-b")
+
+
+class TestYoloStatus:
+    def test_bare_command_preserves_exact_toggle_messages(self):
+        stand_in = _make_stand_in()
+        stand_in._toggle_yolo = lambda: HermesCLI._toggle_yolo(stand_in)  # type: ignore[attr-defined]
+
+        with patch("cli._cprint") as cprint:
+            HermesCLI._handle_yolo_command(stand_in, "/yolo")  # type: ignore[arg-type]
+            cprint.assert_called_once_with(
+                f"  ⚡ YOLO mode {Colors.BOLD}{Colors.GREEN}ON{Colors.RESET}"
+                " — all commands auto-approved. Use with caution."
+            )
+
+            cprint.reset_mock()
+            HermesCLI._handle_yolo_command(stand_in, "/yolo")  # type: ignore[arg-type]
+            cprint.assert_called_once_with(
+                f"  ⚠ YOLO mode {Colors.BOLD}{Colors.RED}OFF{Colors.RESET}"
+                " — dangerous commands will require approval."
+            )
+
+    def test_status_reports_explicit_session_without_mutating_it(self):
+        stand_in = _make_stand_in()
+        approval_module.enable_session_yolo(SESSION_KEY)
+
+        with patch("cli._cprint") as cprint:
+            HermesCLI._handle_yolo_command(stand_in, "/yolo status")  # type: ignore[arg-type]
+
+        assert approval_module.is_session_yolo_enabled(SESSION_KEY) is True
+        cprint.assert_called_once_with(
+            f"  YOLO approval bypass {Colors.BOLD}{Colors.GREEN}ON{Colors.RESET} for this session."
+        )
+
+    def test_status_reports_disabled_session_without_mutating_it(self):
+        stand_in = _make_stand_in()
+
+        with patch("cli._cprint") as cprint:
+            HermesCLI._handle_yolo_command(stand_in, "/yolo status")  # type: ignore[arg-type]
+
+        assert approval_module.is_session_yolo_enabled(SESSION_KEY) is False
+        cprint.assert_called_once_with(
+            f"  YOLO approval bypass {Colors.BOLD}{Colors.RED}OFF{Colors.RESET} for this session."
+        )
+
+    def test_unknown_argument_prints_usage_without_mutating_state(self):
+        stand_in = _make_stand_in()
+        approval_module.enable_session_yolo(SESSION_KEY)
+
+        with patch("cli._cprint") as cprint:
+            HermesCLI._handle_yolo_command(stand_in, "/yolo nope")  # type: ignore[arg-type]
+
+        cprint.assert_called_once_with("/yolo [status]")
+        assert approval_module.is_session_yolo_enabled(SESSION_KEY) is True
 
 
 class TestIsSessionYoloActiveHelper:

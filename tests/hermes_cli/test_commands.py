@@ -86,6 +86,14 @@ class TestCommandRegistry:
             "ultra",
         )
 
+    def test_yolo_registry_metadata_advertises_status(self):
+        yolo = resolve_command("yolo")
+
+        assert yolo is not None
+        assert yolo.args_hint == "[status]"
+        assert yolo.subcommands == ("status",)
+        assert SUBCOMMANDS["/yolo"] == ["status"]
+
     def test_cli_only_and_gateway_only_are_mutually_exclusive(self):
         for cmd in COMMAND_REGISTRY:
             assert not (cmd.cli_only and cmd.gateway_only), \

@@ -408,6 +408,8 @@ Future messages in this room will use that transcript until `/reset` or another 
   yolo:
     disabled:                   "⚠️ Mode YOLO **DÉSACTIVÉ** pour cette session — les commandes dangereuses nécessiteront une approbation."
     enabled:                    "⚡ Mode YOLO **ACTIVÉ** pour cette session — toutes les commandes sont auto-approuvées. À utiliser avec prudence."
+    status_enabled:             "⚡ Le contournement des approbations pour les commandes dangereuses est **ACTIVÉ**."
+    status_disabled:            "⚠️ Le contournement des approbations pour les commandes dangereuses est **DÉSACTIVÉ**."
 
   shared:
     session_db_unavailable:      "Base de données de sessions indisponible."

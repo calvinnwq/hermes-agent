@@ -408,6 +408,8 @@ Future messages in this room will use that transcript until `/reset` or another 
   yolo:
     disabled:                   "⚠️ このセッションの YOLO モードは **OFF** — 危険なコマンドには承認が必要です。"
     enabled:                    "⚡ このセッションの YOLO モードは **ON** — すべてのコマンドが自動承認されます。注意して使用してください。"
+    status_enabled:             "⚡ 危険なコマンドの承認バイパスは **オン** です。"
+    status_disabled:            "⚠️ 危険なコマンドの承認バイパスは **オフ** です。"
 
   shared:
     session_db_unavailable:      "セッションデータベースが利用できません。"

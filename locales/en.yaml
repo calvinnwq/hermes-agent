@@ -420,6 +420,8 @@ gateway:
   yolo:
     disabled:                   "⚠️ YOLO mode **OFF** for this session — dangerous commands will require approval."
     enabled:                    "⚡ YOLO mode **ON** for this session — all commands auto-approved. Use with caution."
+    status_enabled:             "⚡ Dangerous-command approval bypass is **ON**."
+    status_disabled:            "⚠️ Dangerous-command approval bypass is **OFF**."
 
   shared:
     session_db_unavailable:      "Session database not available."

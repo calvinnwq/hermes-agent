@@ -2579,6 +2579,10 @@ export const en: Translations = {
     yoloArmed: 'YOLO armed for this chat',
     yoloOff: 'YOLO off',
     yoloSystem: active => `YOLO ${active ? 'on' : 'off'} for this session`,
+    yoloStatusOn: sessionScoped => `YOLO status is ON${sessionScoped ? ' for this session' : ''}.`,
+    yoloStatusOff: sessionScoped => `YOLO status is OFF${sessionScoped ? ' for this session' : ''}.`,
+    yoloStatusUnavailable:
+      '/yolo status is unavailable on this backend. Upgrade Hermes Agent to use this read-only query.',
     yoloTitle: 'YOLO',
     yoloToggleFailed: 'Could not toggle YOLO',
     profileStatus: current =>

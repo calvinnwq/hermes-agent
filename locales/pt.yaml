@@ -408,6 +408,8 @@ Future messages in this room will use that transcript until `/reset` or another 
   yolo:
     disabled:                   "⚠️ Modo YOLO **DESATIVADO** nesta sessão — comandos perigosos exigirão aprovação."
     enabled:                    "⚡ Modo YOLO **ATIVADO** nesta sessão — todos os comandos são aprovados automaticamente. Usa com precaução."
+    status_enabled:             "⚡ O bypass de aprovação para comandos perigosos está **ATIVADO**."
+    status_disabled:            "⚠️ O bypass de aprovação para comandos perigosos está **DESATIVADO**."
 
   shared:
     session_db_unavailable:      "Base de dados de sessões indisponível."

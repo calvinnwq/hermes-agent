@@ -12393,6 +12393,13 @@ def _(rid, params: dict) -> dict:
         return _ok(rid, {"value": "fast" if tier == "priority" else "normal"})
     if key == "busy":
         return _ok(rid, {"value": _load_busy_input_mode()})
+    if key == "yolo":
+        from tools.approval import is_approval_bypass_active
+
+        session = _sessions.get(params.get("session_id", ""))
+        session_key = str((session or {}).get("session_key") or "")
+        enabled = is_approval_bypass_active(session_key)
+        return _ok(rid, {"key": key, "value": "1" if enabled else "0"})
     if key in {"approval_mode", "approvals.mode"}:
         try:
             return _ok(rid, {"value": _load_approval_mode()})

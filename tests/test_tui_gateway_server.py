@@ -3884,6 +3884,45 @@ def test_session_create_drops_pending_title_on_valueerror(monkeypatch):
         server._sessions.pop("sid", None)
 
 
+def test_config_get_yolo_reports_effective_session_bypass_without_mutating(monkeypatch):
+    import tools.approval as approval
+    from tools.approval import (
+        clear_session,
+        enable_session_yolo,
+        is_session_yolo_enabled,
+    )
+
+    monkeypatch.setattr(approval, "_YOLO_MODE_FROZEN", False)
+    monkeypatch.setattr(approval, "_get_approval_mode", lambda: "manual")
+    server._sessions["sid"] = _session()
+    try:
+        response_off = server.handle_request(
+            {
+                "id": "1",
+                "method": "config.get",
+                "params": {"session_id": "sid", "key": "yolo"},
+            }
+        )
+        assert response_off is not None
+        assert response_off["result"] == {"key": "yolo", "value": "0"}
+        assert is_session_yolo_enabled("session-key") is False
+
+        enable_session_yolo("session-key")
+        response_on = server.handle_request(
+            {
+                "id": "2",
+                "method": "config.get",
+                "params": {"session_id": "sid", "key": "yolo"},
+            }
+        )
+        assert response_on is not None
+        assert response_on["result"] == {"key": "yolo", "value": "1"}
+        assert is_session_yolo_enabled("session-key") is True
+    finally:
+        clear_session("session-key")
+        server._sessions.pop("sid", None)
+
+
 def test_config_set_yolo_toggles_session_scope():
     from tools.approval import clear_session, is_session_yolo_enabled
 
