@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 
+import httpx
+import pytest
+
 from agent.account_usage import (
     AccountUsageMetric,
     AccountUsageSnapshot,
@@ -166,6 +169,25 @@ def test_fetch_account_usage_codex_rate_limit_remains_unavailable(monkeypatch):
 
     assert snapshot is not None
     assert snapshot.unavailable_reason == "Provider usage could not be fetched."
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_fetch_account_usage_http_auth_rejection_is_unauthenticated(
+    monkeypatch, status_code
+):
+    request = httpx.Request("GET", "https://provider.invalid/usage")
+    response = httpx.Response(status_code, request=request)
+
+    def reject_request(*args, **kwargs):
+        raise httpx.HTTPStatusError(
+            f"HTTP {status_code}", request=request, response=response
+        )
+
+    monkeypatch.setattr(
+        "agent.account_usage._fetch_openrouter_account_usage", reject_request
+    )
+
+    assert fetch_account_usage("openrouter", report_failures=True) is None
 
 
 def test_render_account_usage_lines_includes_reset_and_provider():

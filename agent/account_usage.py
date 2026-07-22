@@ -926,6 +926,15 @@ def _fetch_openrouter_account_usage(base_url: Optional[str], api_key: Optional[s
     )
 
 
+def _unavailable_account_usage(provider: str) -> AccountUsageSnapshot:
+    return AccountUsageSnapshot(
+        provider=provider,
+        source="provider_api",
+        fetched_at=_utc_now(),
+        unavailable_reason="Provider usage could not be fetched.",
+    )
+
+
 def fetch_account_usage(
     provider: Optional[str],
     *,
@@ -943,24 +952,20 @@ def fetch_account_usage(
             return _fetch_anthropic_account_usage()
         if normalized == "openrouter":
             return _fetch_openrouter_account_usage(base_url, api_key)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            return None
+        if report_failures:
+            return _unavailable_account_usage(normalized)
+        return None
     except AuthError as exc:
         if is_rate_limited_auth_error(exc) or not exc.relogin_required:
             if report_failures:
-                return AccountUsageSnapshot(
-                    provider=normalized,
-                    source="provider_api",
-                    fetched_at=_utc_now(),
-                    unavailable_reason="Provider usage could not be fetched.",
-                )
+                return _unavailable_account_usage(normalized)
             return None
         return None
     except Exception:
         if report_failures:
-            return AccountUsageSnapshot(
-                provider=normalized,
-                source="provider_api",
-                fetched_at=_utc_now(),
-                unavailable_reason="Provider usage could not be fetched.",
-            )
+            return _unavailable_account_usage(normalized)
         return None
     return None
