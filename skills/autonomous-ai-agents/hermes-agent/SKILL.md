@@ -235,6 +235,8 @@ Multiple credentials per provider form a pool that rotates automatically and ski
 ### Other
 
 ```
+hermes usage [--session ID | --latest-session] [--json]
+                           Standalone session and account usage
 hermes insights [--days N]  Usage analytics
 hermes update               Update to latest version
 hermes desktop / gui        Launch the native desktop app

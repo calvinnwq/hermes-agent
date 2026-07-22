@@ -4593,9 +4593,7 @@ class SessionDB:
             ).fetchall()
         return [row["id"] for row in rows]
 
-    def get_latest_main_model_usage(
-        self, session_id: str
-    ) -> Optional[Dict[str, Any]]:
+    def get_latest_main_model_usage(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Return the session's most recently active main-loop model route."""
         with self._lock:
             row = self._conn.execute(

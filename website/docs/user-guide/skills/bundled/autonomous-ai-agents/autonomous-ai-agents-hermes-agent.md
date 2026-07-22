@@ -238,6 +238,8 @@ hermes auth reset PROVIDER  Clear exhaustion status
 ### Other
 
 ```
+hermes usage [--session ID | --latest-session] [--json]
+                           Standalone session and account usage
 hermes insights [--days N]  Usage analytics
 hermes update               Update to latest version
 hermes pairing list/approve/revoke  DM authorization

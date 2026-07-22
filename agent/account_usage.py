@@ -503,11 +503,20 @@ def _resolve_codex_usage_credentials(
             account_id = str(tokens.get("account_id", "") or "").strip() or None
         except AuthError:
             # Pool-only creds carry no singleton account_id; header is optional.
-            logger.debug("codex ▸ /usage account_id read failed (best-effort)", exc_info=True)
-        return creds["api_key"], str(creds.get("base_url", "") or "").strip(), account_id
+            logger.debug(
+                "codex ▸ /usage account_id read failed (best-effort)", exc_info=True
+            )
+        return (
+            creds["api_key"],
+            str(creds.get("base_url", "") or "").strip(),
+            account_id,
+        )
     except AuthError as exc:
         resolver_error = exc
-        logger.debug("codex ▸ /usage runtime resolver returned no creds; trying pool", exc_info=True)
+        logger.debug(
+            "codex ▸ /usage runtime resolver returned no creds; trying pool",
+            exc_info=True,
+        )
 
     if resolver_error is not None and not resolver_error.relogin_required:
         raise resolver_error
@@ -528,14 +537,20 @@ def _resolve_codex_usage_credentials(
             code="credentials_missing",
             relogin_required=True,
         )
-    return entry.runtime_api_key, str(entry.runtime_base_url or base_url or "").strip(), None
+    return (
+        entry.runtime_api_key,
+        str(entry.runtime_base_url or base_url or "").strip(),
+        None,
+    )
 
 
 def _fetch_codex_account_usage(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> Optional[AccountUsageSnapshot]:
-    token, resolved_base_url, account_id = _resolve_codex_usage_credentials(base_url, api_key)
+    token, resolved_base_url, account_id = _resolve_codex_usage_credentials(
+        base_url, api_key
+    )
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -544,7 +559,9 @@ def _fetch_codex_account_usage(
     if account_id:
         headers["ChatGPT-Account-Id"] = account_id
     with httpx.Client(timeout=15.0) as client:
-        response = client.get(_resolve_codex_usage_url(resolved_base_url), headers=headers)
+        response = client.get(
+            _resolve_codex_usage_url(resolved_base_url), headers=headers
+        )
         response.raise_for_status()
     payload = response.json() or {}
     rate_limit = payload.get("rate_limit") or {}
