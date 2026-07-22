@@ -475,6 +475,36 @@ def test_nous_account_access_states(
     assert result["topup"]["remaining_usd"] == topup
 
 
+def test_nous_rollover_balance_above_allowance_has_unknown_usage(monkeypatch):
+    subscription = NousPortalSubscriptionInfo(
+        plan="Pro",
+        monthly_credits=100.0,
+        credits_remaining=120.0,
+        current_period_end="2026-08-01T00:00:00Z",
+    )
+    account = NousPortalAccountInfo(
+        logged_in=True,
+        source="account_api",
+        fresh=True,
+        subscription=subscription,
+        paid_service_access=True,
+        paid_service_access_info=NousPaidServiceAccessInfo(
+            paid_access=True,
+            has_active_subscription=True,
+            active_subscription_is_paid=True,
+            subscription_credits_remaining=120.0,
+            total_usable_credits=120.0,
+        ),
+    )
+    monkeypatch.setattr(
+        usage, "get_nous_portal_account_info", lambda force_fresh=True: account
+    )
+
+    result = usage._collect_nous_account([])
+
+    assert result["subscription"]["used_percent"] is None
+
+
 def test_nous_account_helper_can_resolve_credential_pool_auth(monkeypatch):
     account = NousPortalAccountInfo(
         logged_in=True,
@@ -697,7 +727,25 @@ def test_human_report_omits_unrequested_session_section(monkeypatch, capsys):
     assert "--session ID" not in output
     assert "Provider account" in output
     assert "Nous Portal" in output
-    assert "hermes login" in output
+    assert "hermes login" not in output
+    assert "hermes model" in output
+    assert "hermes auth add nous" in output
+
+
+def test_human_report_uses_supported_provider_auth_guidance():
+    report = {
+        "session": usage._empty_session(),
+        "accounts": {
+            "provider": usage._empty_provider_account("unauthenticated", "openrouter"),
+            "nous": usage._empty_nous_account(),
+        },
+        "warnings": [],
+    }
+
+    output = usage.render_human(report)
+
+    assert "hermes login" not in output
+    assert "hermes auth add openrouter" in output
 
 
 def test_human_local_failure_writes_only_a_concise_sanitized_error(monkeypatch, capsys):

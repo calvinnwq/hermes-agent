@@ -207,6 +207,8 @@ def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
         result["subscription"]["allowance_usd"] is not None
         and result["subscription"]["allowance_usd"] > 0
         and result["subscription"]["remaining_usd"] is not None
+        and result["subscription"]["remaining_usd"]
+        <= result["subscription"]["allowance_usd"]
     ):
         used = (
             1
@@ -478,11 +480,14 @@ def render_human(report: dict[str, Any]) -> str:
         for metric in provider["metrics"]:
             lines.append(f"  {metric['name']}: {metric['value']:g} {metric['unit']}")
     elif provider["status"] == "not_configured":
-        lines.append(
-            "  No runtime provider configured. Run hermes login or hermes model."
-        )
+        lines.append("  No runtime provider configured. Run hermes model.")
     elif provider["status"] == "unauthenticated":
-        lines.append("  Provider is not authenticated. Run hermes login.")
+        command = (
+            f"hermes auth add {provider['provider']}"
+            if provider["provider"]
+            else "hermes model"
+        )
+        lines.append(f"  Provider is not authenticated. Run {command}.")
     else:
         lines.append(f"  {provider['status'].replace('_', ' ')}")
 
@@ -494,7 +499,7 @@ def render_human(report: dict[str, Any]) -> str:
         if nous["total_spendable_usd"] is not None:
             lines.append(f"  Spendable: ${nous['total_spendable_usd']:.2f}")
     elif nous["status"] == "not_connected":
-        lines.append("  Not connected. Run hermes login nous.")
+        lines.append("  Not connected. Run hermes auth add nous.")
     else:
         lines.append(f"  {nous['status'].replace('_', ' ')}")
 
