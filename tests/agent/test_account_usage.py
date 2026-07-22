@@ -92,7 +92,14 @@ def test_codex_usage_falls_back_to_native_credential_pool(monkeypatch, codex_usa
         account_usage,
         "resolve_codex_runtime_credentials",
         lambda **kwargs: (_ for _ in ()).throw(
-            account_usage.AuthError("no singleton auth", provider="openai-codex", code="codex_auth_missing")
+            # A missing Codex login is a terminal authentication failure, so
+            # the resolver is allowed to try the native credential pool.
+            account_usage.AuthError(
+                "no singleton auth",
+                provider="openai-codex",
+                code="codex_auth_missing",
+                relogin_required=True,
+            )
         ),
     )
 
