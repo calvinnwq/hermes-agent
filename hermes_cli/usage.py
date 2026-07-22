@@ -185,16 +185,27 @@ def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
         getattr(access_info, "has_active_subscription", False)
         or (isinstance(allowance, (int, float)) and allowance > 0)
     )
+    active_subscription_is_paid = getattr(
+        access_info, "active_subscription_is_paid", None
+    )
     has_topup = isinstance(topup, (int, float)) and topup > 0
 
     if has_subscription and has_topup:
-        access = "subscription_and_topup"
+        access = (
+            "subscription_and_topup"
+            if active_subscription_is_paid is not False
+            else "topup_only"
+        )
     elif has_subscription and account.paid_service_access is True:
         access = "subscription"
     elif has_topup:
         access = "topup_only"
     elif account.paid_service_access is False:
-        access = "depleted" if has_subscription else "free"
+        access = (
+            "free"
+            if not has_subscription or active_subscription_is_paid is False
+            else "depleted"
+        )
     else:
         access = "unknown"
         result["status"] = "partial"
@@ -307,7 +318,7 @@ def _select_session(
         row = None
         if latest_session:
             rows = db.list_sessions_rich(
-                exclude_sources=["cron"],
+                exclude_sources=["cron", "tool"],
                 limit=1,
                 min_message_count=1,
                 order_by_last_active=True,

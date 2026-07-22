@@ -68,6 +68,8 @@ def test_session_selectors_are_explicit_and_latest_uses_user_facing_projection(
     db.append_message("visible-newest", "user", "hello")
     db.create_session("cron-newest", source="cron")
     db.append_message("cron-newest", "user", "scheduled")
+    db.create_session("tool-newest", source="tool")
+    db.append_message("tool-newest", "user", "tool output")
     db.create_session("shared-prefix-one", source="cli")
     db.create_session("shared-prefix-two", source="cli")
 
@@ -138,7 +140,7 @@ def test_latest_session_reloads_the_projected_id_for_durable_counters(monkeypatc
     class FakeDB:
         def list_sessions_rich(self, **kwargs):
             assert kwargs == {
-                "exclude_sources": ["cron"],
+                "exclude_sources": ["cron", "tool"],
                 "limit": 1,
                 "min_message_count": 1,
                 "order_by_last_active": True,
@@ -503,6 +505,34 @@ def test_nous_rollover_balance_above_allowance_has_unknown_usage(monkeypatch):
     result = usage._collect_nous_account([])
 
     assert result["subscription"]["used_percent"] is None
+
+
+def test_nous_active_free_plan_is_not_depleted(monkeypatch):
+    account = NousPortalAccountInfo(
+        logged_in=True,
+        source="account_api",
+        fresh=True,
+        subscription=NousPortalSubscriptionInfo(
+            plan="Free",
+            monthly_credits=100.0,
+            credits_remaining=40.0,
+        ),
+        paid_service_access=False,
+        paid_service_access_info=NousPaidServiceAccessInfo(
+            paid_access=False,
+            has_active_subscription=True,
+            active_subscription_is_paid=False,
+            subscription_credits_remaining=40.0,
+            total_usable_credits=40.0,
+        ),
+    )
+    monkeypatch.setattr(
+        usage, "get_nous_portal_account_info", lambda force_fresh=True: account
+    )
+
+    result = usage._collect_nous_account([])
+
+    assert result["access"] == "free"
 
 
 def test_nous_account_helper_can_resolve_credential_pool_auth(monkeypatch):
