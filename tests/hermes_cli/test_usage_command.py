@@ -678,9 +678,7 @@ def test_runtime_provider_resolution_failure_is_a_sanitized_local_failure(
     assert sentinel not in json.dumps(report)
 
 
-def test_human_report_has_stable_sections_and_actionable_empty_hints(
-    monkeypatch, capsys
-):
+def test_human_report_omits_unrequested_session_section(monkeypatch, capsys):
     monkeypatch.setattr(usage, "_resolve_configured_provider", lambda: None)
     monkeypatch.setattr(
         usage,
@@ -695,10 +693,10 @@ def test_human_report_has_stable_sections_and_actionable_empty_hints(
 
     output = capsys.readouterr().out
     assert exc.value.code == 0
-    assert "Session usage" in output
+    assert "Session usage" not in output
+    assert "--session ID" not in output
     assert "Provider account" in output
     assert "Nous Portal" in output
-    assert "--session ID" in output
     assert "hermes login" in output
 
 

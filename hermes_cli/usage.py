@@ -439,8 +439,9 @@ def render_human(report: dict[str, Any]) -> str:
     session = report["session"]
     provider = report["accounts"]["provider"]
     nous = report["accounts"]["nous"]
-    lines = ["Session usage"]
+    lines = []
     if session["status"] == "ok":
+        lines.append("Session usage")
         lines.extend([
             f"  Session: {session['id']} ({session['source'] or 'unknown'})",
             f"  Route: {session['provider'] or 'unknown'} / {session['model'] or 'unknown'}",
@@ -453,12 +454,13 @@ def render_human(report: dict[str, Any]) -> str:
             ),
             "  Context: not applicable for persisted standalone sessions",
         ])
-    elif session["status"] == "not_requested":
-        lines.append("  Not requested. Use --session ID or --latest-session.")
-    else:
+    elif session["status"] != "not_requested":
+        lines.append("Session usage")
         lines.append(f"  {session['status'].replace('_', ' ')}")
 
-    lines.extend(["", "Provider account"])
+    if lines:
+        lines.append("")
+    lines.append("Provider account")
     if provider["status"] == "ok":
         heading = provider["provider"]
         if provider["plan"]:

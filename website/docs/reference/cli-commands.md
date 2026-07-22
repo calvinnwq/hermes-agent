@@ -1399,7 +1399,8 @@ hermes usage [--session ID | --latest-session] [--json]
 ```
 
 `hermes usage` is a standalone snapshot, so it does not inherit the active session from another CLI, TUI, desktop, gateway, cron, or delegated process.
-Without a selector, the session section reports `not_requested` and no persisted session is read.
+Without a selector, no persisted session is read.
+The JSON session object reports `not_requested`, while the human view omits the session section.
 
 | Option | Description |
 |--------|-------------|
@@ -1407,7 +1408,7 @@ Without a selector, the session section reports `not_requested` and no persisted
 | `--latest-session` | Include the latest visible, non-cron session with at least one message. |
 | `--json` | Emit one schema-versioned JSON document for scripts and automation. |
 
-The human view always contains three sections:
+The human view contains the account sections and includes **Session usage** only when a session selector was supplied:
 
 - **Session usage** shows durable persisted counters, timestamps, source, and the latest main-loop model/provider route when a session was explicitly selected.
 - **Provider account** shows live allowance windows for supported configured providers (`openai-codex`, `anthropic`, and `openrouter`).
