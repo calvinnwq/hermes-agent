@@ -11,6 +11,7 @@ import httpx
 from agent.anthropic_adapter import _is_oauth_token, resolve_anthropic_token
 from hermes_cli.auth import (
     AuthError,
+    _decode_jwt_claims,
     _read_codex_tokens,
     is_rate_limited_auth_error,
     resolve_codex_runtime_credentials,
@@ -463,6 +464,17 @@ def _resolve_codex_usage_url(base_url: str) -> str:
     return _codex_backend_urls(base_url)[0]
 
 
+def _codex_account_id_from_token(token: str) -> Optional[str]:
+    claims = _decode_jwt_claims(token)
+    auth_claims = claims.get("https://api.openai.com/auth")
+    account_id = (
+        auth_claims.get("chatgpt_account_id")
+        if isinstance(auth_claims, dict)
+        else None
+    )
+    return account_id if isinstance(account_id, str) and account_id.strip() else None
+
+
 def _resolve_codex_usage_credentials(
     base_url: Optional[str],
     api_key: Optional[str],
@@ -476,7 +488,11 @@ def _resolve_codex_usage_credentials(
     """
     explicit_key = str(api_key or "").strip()
     if explicit_key:
-        return explicit_key, str(base_url or "").strip(), None
+        return (
+            explicit_key,
+            str(base_url or "").strip(),
+            _codex_account_id_from_token(explicit_key),
+        )
 
     # Tier 2: the native runtime resolver. It ALREADY falls back to the
     # credential pool when the singleton is empty (see
@@ -496,13 +512,15 @@ def _resolve_codex_usage_credentials(
     resolver_error: Optional[AuthError] = None
     try:
         creds = resolve_codex_runtime_credentials(refresh_if_expiring=True)
-        account_id: Optional[str] = None
+        account_id = _codex_account_id_from_token(creds["api_key"])
         try:
             token_data = _read_codex_tokens()
             tokens = token_data.get("tokens") or {}
-            account_id = str(tokens.get("account_id", "") or "").strip() or None
+            account_id = (
+                str(tokens.get("account_id", "") or "").strip()
+                or account_id
+            )
         except AuthError:
-            # Pool-only creds carry no singleton account_id; header is optional.
             logger.debug(
                 "codex ▸ /usage account_id read failed (best-effort)", exc_info=True
             )
@@ -523,9 +541,7 @@ def _resolve_codex_usage_credentials(
 
     # Tier 3: direct pool select. Reached only when the resolver itself raises
     # AuthError (e.g. singleton missing AND its own pool read found nothing at
-    # resolve time, but a pool entry is usable now). Pool credentials have no
-    # account_id concept, so the ChatGPT-Account-Id header is intentionally
-    # omitted here.
+    # resolve time, but a pool entry is usable now).
     from agent.credential_pool import load_pool
 
     pool = load_pool("openai-codex")
@@ -537,10 +553,11 @@ def _resolve_codex_usage_credentials(
             code="credentials_missing",
             relogin_required=True,
         )
+    token = entry.runtime_api_key
     return (
-        entry.runtime_api_key,
+        token,
         str(entry.runtime_base_url or base_url or "").strip(),
-        None,
+        _codex_account_id_from_token(token),
     )
 
 
