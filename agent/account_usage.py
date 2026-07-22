@@ -509,6 +509,9 @@ def _resolve_codex_usage_credentials(
         resolver_error = exc
         logger.debug("codex ▸ /usage runtime resolver returned no creds; trying pool", exc_info=True)
 
+    if resolver_error is not None and not resolver_error.relogin_required:
+        raise resolver_error
+
     # Tier 3: direct pool select. Reached only when the resolver itself raises
     # AuthError (e.g. singleton missing AND its own pool read found nothing at
     # resolve time, but a pool entry is usable now). Pool credentials have no
@@ -519,8 +522,6 @@ def _resolve_codex_usage_credentials(
     pool = load_pool("openai-codex")
     entry = pool.select()
     if entry is None:
-        if resolver_error is not None and is_rate_limited_auth_error(resolver_error):
-            raise resolver_error
         raise AuthError(
             "No available openai-codex credential in credential pool",
             provider="openai-codex",
@@ -943,15 +944,15 @@ def fetch_account_usage(
         if normalized == "openrouter":
             return _fetch_openrouter_account_usage(base_url, api_key)
     except AuthError as exc:
-        if not is_rate_limited_auth_error(exc):
+        if is_rate_limited_auth_error(exc) or not exc.relogin_required:
+            if report_failures:
+                return AccountUsageSnapshot(
+                    provider=normalized,
+                    source="provider_api",
+                    fetched_at=_utc_now(),
+                    unavailable_reason="Provider usage could not be fetched.",
+                )
             return None
-        if report_failures:
-            return AccountUsageSnapshot(
-                provider=normalized,
-                source="provider_api",
-                fetched_at=_utc_now(),
-                unavailable_reason="Provider usage could not be fetched.",
-            )
         return None
     except Exception:
         if report_failures:

@@ -12,7 +12,6 @@ from typing import Any
 
 from agent.account_usage import fetch_account_usage
 from hermes_cli.nous_account import get_nous_portal_account_info
-from hermes_state import SessionDB
 
 SCHEMA_VERSION = 1
 V1_PROVIDER_METRICS = frozenset({
@@ -298,6 +297,8 @@ def _select_session(
         return _empty_session(), 0
     if session_id == "":
         return _empty_session("not_found"), 2
+
+    from hermes_state import SessionDB
 
     db = SessionDB()
     try:

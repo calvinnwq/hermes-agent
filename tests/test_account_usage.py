@@ -104,7 +104,11 @@ def test_fetch_account_usage_codex_without_credentials_is_unauthenticated(monkey
     monkeypatch.setattr(
         "agent.account_usage.resolve_codex_runtime_credentials",
         lambda refresh_if_expiring=True: (_ for _ in ()).throw(
-            AuthError("no credentials", provider="openai-codex")
+            AuthError(
+                "no credentials",
+                provider="openai-codex",
+                relogin_required=True,
+            )
         ),
     )
     monkeypatch.setattr(
@@ -113,6 +117,33 @@ def test_fetch_account_usage_codex_without_credentials_is_unauthenticated(monkey
     )
 
     assert fetch_account_usage("openai-codex", report_failures=True) is None
+
+
+def test_fetch_account_usage_codex_refresh_failure_is_unavailable_without_pool_fallback(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "agent.account_usage.resolve_codex_runtime_credentials",
+        lambda refresh_if_expiring=True: (_ for _ in ()).throw(
+            AuthError(
+                "temporary refresh failure",
+                provider="openai-codex",
+                code="codex_refresh_failed",
+                relogin_required=False,
+            )
+        ),
+    )
+    pool_calls = []
+    monkeypatch.setattr(
+        "agent.credential_pool.load_pool",
+        lambda provider: pool_calls.append(provider),
+    )
+
+    snapshot = fetch_account_usage("openai-codex", report_failures=True)
+
+    assert snapshot is not None
+    assert snapshot.unavailable_reason == "Provider usage could not be fetched."
+    assert pool_calls == []
 
 
 def test_fetch_account_usage_codex_rate_limit_remains_unavailable(monkeypatch):

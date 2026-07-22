@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 
 import pytest
 
+import hermes_state
 from agent.account_usage import (
     AccountUsageMetric,
     AccountUsageSnapshot,
     AccountUsageWindow,
 )
-from hermes_state import SessionDB
 from hermes_cli import usage
 from hermes_cli.auth import AuthError
 from hermes_cli.nous_account import (
@@ -26,7 +26,7 @@ from hermes_cli.nous_account import (
 
 def test_default_json_report_does_not_select_a_persisted_session(monkeypatch, capsys):
     monkeypatch.setattr(
-        usage,
+        hermes_state,
         "SessionDB",
         lambda: pytest.fail("default usage must not open the session database"),
     )
@@ -61,7 +61,7 @@ def _run_json(args, capsys):
 def test_session_selectors_are_explicit_and_latest_uses_user_facing_projection(
     tmp_path, monkeypatch, capsys
 ):
-    db = SessionDB(db_path=tmp_path / "state.db")
+    db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
     db.create_session("visible-older", source="tui")
     db.append_message("visible-older", "user", "hello")
     db.create_session("visible-newest", source="cli")
@@ -71,7 +71,7 @@ def test_session_selectors_are_explicit_and_latest_uses_user_facing_projection(
     db.create_session("shared-prefix-one", source="cli")
     db.create_session("shared-prefix-two", source="cli")
 
-    monkeypatch.setattr(usage, "SessionDB", lambda: db)
+    monkeypatch.setattr(hermes_state, "SessionDB", lambda: db)
     monkeypatch.setattr(db, "close", lambda: None)
     monkeypatch.setattr(
         usage,
@@ -166,7 +166,7 @@ def test_latest_session_reloads_the_projected_id_for_durable_counters(monkeypatc
         def close(self):
             pass
 
-    monkeypatch.setattr(usage, "SessionDB", FakeDB)
+    monkeypatch.setattr(hermes_state, "SessionDB", FakeDB)
 
     session, code = usage._select_session(None, True)
 
@@ -179,7 +179,7 @@ def test_latest_session_reloads_the_projected_id_for_durable_counters(monkeypatc
 def test_latest_compression_continuation_reports_tip_counters(
     tmp_path, monkeypatch, capsys
 ):
-    db = SessionDB(db_path=tmp_path / "state.db")
+    db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
     db.create_session(session_id="root", source="cli", model="root-model")
     db.append_message("root", "user", "root")
     db.update_token_counts(
@@ -206,7 +206,7 @@ def test_latest_compression_continuation_reports_tip_counters(
         model="tip-model",
         billing_provider="anthropic",
     )
-    monkeypatch.setattr(usage, "SessionDB", lambda: db)
+    monkeypatch.setattr(hermes_state, "SessionDB", lambda: db)
     monkeypatch.setattr(db, "close", lambda: None)
     monkeypatch.setattr(
         usage,
@@ -237,7 +237,7 @@ def test_latest_compression_continuation_reports_tip_counters(
 def test_persisted_session_uses_durable_counters_and_latest_main_route(
     tmp_path, monkeypatch, capsys
 ):
-    db = SessionDB(db_path=tmp_path / "state.db")
+    db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
     db.create_session(
         "persisted",
         source="discord",
@@ -262,7 +262,7 @@ def test_persisted_session_uses_durable_counters_and_latest_main_route(
         billing_provider="anthropic",
     )
 
-    monkeypatch.setattr(usage, "SessionDB", lambda: db)
+    monkeypatch.setattr(hermes_state, "SessionDB", lambda: db)
     monkeypatch.setattr(db, "close", lambda: None)
     monkeypatch.setattr(usage, "_resolve_configured_provider", lambda: "openrouter")
     provider_calls = []
@@ -336,7 +336,7 @@ def test_account_failure_is_partial_and_structured_provider_data_is_allowlisted(
         ),
         details=(sentinel,),
     )
-    monkeypatch.setattr(usage, "SessionDB", lambda: pytest.fail("no selector"))
+    monkeypatch.setattr(hermes_state, "SessionDB", lambda: pytest.fail("no selector"))
     monkeypatch.setattr(usage, "_resolve_configured_provider", lambda: "openrouter")
     monkeypatch.setattr(
         usage,
@@ -604,7 +604,7 @@ def test_json_mode_suppresses_dependency_stdout(monkeypatch, capsys):
 def test_local_session_failure_is_sanitized_and_operational(monkeypatch, capsys):
     sentinel = "private/path user@example.com"
     monkeypatch.setattr(
-        usage, "SessionDB", lambda: (_ for _ in ()).throw(RuntimeError(sentinel))
+        hermes_state, "SessionDB", lambda: (_ for _ in ()).throw(RuntimeError(sentinel))
     )
     monkeypatch.setattr(usage, "_resolve_configured_provider", lambda: None)
     monkeypatch.setattr(
@@ -789,3 +789,28 @@ def test_blank_slate_real_command_returns_not_configured_json(tmp_path):
     report = json.loads(completed.stdout)
     assert report["session"]["status"] == "not_requested"
     assert report["accounts"]["provider"]["status"] == "not_configured"
+
+
+def test_usage_import_does_not_load_session_db_before_profile_setup(tmp_path):
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    env = os.environ.copy()
+    env["HERMES_HOME"] = str(hermes_home)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from hermes_cli import usage; print('hermes_state' in sys.modules)",
+        ],
+        cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        text=True,
+        capture_output=True,
+        env=env,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    assert completed.stdout == "False\n"
