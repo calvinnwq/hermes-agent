@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any, Optional
 import httpx
 
 from agent.anthropic_adapter import _is_oauth_token, resolve_anthropic_token
-from hermes_cli.auth import AuthError, _read_codex_tokens, resolve_codex_runtime_credentials
+from hermes_cli.auth import (
+    AuthError,
+    _decode_jwt_claims,
+    is_rate_limited_auth_error,
+    resolve_codex_runtime_credentials,
+)
 from hermes_cli.runtime_provider import resolve_runtime_provider
 
 if TYPE_CHECKING:
@@ -28,6 +33,14 @@ class AccountUsageWindow:
     used_percent: Optional[float] = None
     reset_at: Optional[datetime] = None
     detail: Optional[str] = None
+    id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class AccountUsageMetric:
+    name: str
+    value: float
+    unit: str = "usd"
 
 
 @dataclass(frozen=True)
@@ -40,10 +53,13 @@ class AccountUsageSnapshot:
     windows: tuple[AccountUsageWindow, ...] = ()
     details: tuple[str, ...] = ()
     unavailable_reason: Optional[str] = None
+    metrics: tuple[AccountUsageMetric, ...] = ()
 
     @property
     def available(self) -> bool:
-        return bool(self.windows or self.details) and not self.unavailable_reason
+        return bool(
+            self.windows or self.details or self.metrics
+        ) and not self.unavailable_reason
 
 
 def _title_case_slug(value: Optional[str]) -> Optional[str]:
@@ -449,6 +465,17 @@ def _resolve_codex_usage_url(base_url: str) -> str:
     return _codex_backend_urls(base_url)[0]
 
 
+def _codex_account_id_from_token(token: str) -> Optional[str]:
+    claims = _decode_jwt_claims(token)
+    auth_claims = claims.get("https://api.openai.com/auth")
+    account_id = (
+        auth_claims.get("chatgpt_account_id")
+        if isinstance(auth_claims, dict)
+        else None
+    )
+    return account_id if isinstance(account_id, str) and account_id.strip() else None
+
+
 def _resolve_codex_usage_credentials(
     base_url: Optional[str],
     api_key: Optional[str],
@@ -462,7 +489,11 @@ def _resolve_codex_usage_credentials(
     """
     explicit_key = str(api_key or "").strip()
     if explicit_key:
-        return explicit_key, str(base_url or "").strip(), None
+        return (
+            explicit_key,
+            str(base_url or "").strip(),
+            _codex_account_id_from_token(explicit_key),
+        )
 
     # Tier 2: the native runtime resolver. It ALREADY falls back to the
     # credential pool when the singleton is empty (see
@@ -479,39 +510,54 @@ def _resolve_codex_usage_credentials(
     # The ``account_id`` (for the ``ChatGPT-Account-Id`` header) is read
     # best-effort: a partial/missing singleton token store must not sink an
     # otherwise-usable resolver credential and force a header-less pool fallback.
+    resolver_error: Optional[AuthError] = None
     try:
         creds = resolve_codex_runtime_credentials(refresh_if_expiring=True)
-        account_id: Optional[str] = None
-        try:
-            token_data = _read_codex_tokens()
-            tokens = token_data.get("tokens") or {}
-            account_id = str(tokens.get("account_id", "") or "").strip() or None
-        except AuthError:
-            # Pool-only creds carry no singleton account_id; header is optional.
-            logger.debug("codex ▸ /usage account_id read failed (best-effort)", exc_info=True)
-        return creds["api_key"], str(creds.get("base_url", "") or "").strip(), account_id
-    except AuthError:
-        logger.debug("codex ▸ /usage runtime resolver returned no creds; trying pool", exc_info=True)
+        account_id = _codex_account_id_from_token(creds["api_key"])
+        return (
+            creds["api_key"],
+            str(creds.get("base_url", "") or "").strip(),
+            account_id,
+        )
+    except AuthError as exc:
+        resolver_error = exc
+        logger.debug(
+            "codex ▸ /usage runtime resolver returned no creds; trying pool",
+            exc_info=True,
+        )
+
+    if resolver_error is not None and not resolver_error.relogin_required:
+        raise resolver_error
 
     # Tier 3: direct pool select. Reached only when the resolver itself raises
     # AuthError (e.g. singleton missing AND its own pool read found nothing at
-    # resolve time, but a pool entry is usable now). Pool credentials have no
-    # account_id concept, so the ChatGPT-Account-Id header is intentionally
-    # omitted here.
+    # resolve time, but a pool entry is usable now).
     from agent.credential_pool import load_pool
 
     pool = load_pool("openai-codex")
     entry = pool.select()
     if entry is None:
-        raise RuntimeError("No available openai-codex credential in credential pool")
-    return entry.runtime_api_key, str(entry.runtime_base_url or base_url or "").strip(), None
+        raise AuthError(
+            "No available openai-codex credential in credential pool",
+            provider="openai-codex",
+            code="credentials_missing",
+            relogin_required=True,
+        )
+    token = entry.runtime_api_key
+    return (
+        token,
+        str(entry.runtime_base_url or base_url or "").strip(),
+        _codex_account_id_from_token(token),
+    )
 
 
 def _fetch_codex_account_usage(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> Optional[AccountUsageSnapshot]:
-    token, resolved_base_url, account_id = _resolve_codex_usage_credentials(base_url, api_key)
+    token, resolved_base_url, account_id = _resolve_codex_usage_credentials(
+        base_url, api_key
+    )
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -520,24 +566,31 @@ def _fetch_codex_account_usage(
     if account_id:
         headers["ChatGPT-Account-Id"] = account_id
     with httpx.Client(timeout=15.0) as client:
-        response = client.get(_resolve_codex_usage_url(resolved_base_url), headers=headers)
+        response = client.get(
+            _resolve_codex_usage_url(resolved_base_url), headers=headers
+        )
         response.raise_for_status()
     payload = response.json() or {}
     rate_limit = payload.get("rate_limit") or {}
     windows: list[AccountUsageWindow] = []
-    for key, label in (("primary_window", "Session"), ("secondary_window", "Weekly")):
+    for key, window_id, label in (
+        ("primary_window", "five_hour", "Session"),
+        ("secondary_window", "weekly", "Weekly"),
+    ):
         window = rate_limit.get(key) or {}
         used = window.get("used_percent")
         if used is None:
             continue
         windows.append(
             AccountUsageWindow(
+                id=window_id,
                 label=label,
                 used_percent=float(used),
                 reset_at=_parse_dt(window.get("reset_at")),
             )
         )
     details: list[str] = []
+    metrics: list[AccountUsageMetric] = []
     reset_credits = payload.get("rate_limit_reset_credits") or {}
     banked = reset_credits.get("available_count")
     if isinstance(banked, (int, float)) and int(banked) > 0:
@@ -551,6 +604,7 @@ def _fetch_codex_account_usage(
         balance = credits.get("balance")
         if isinstance(balance, (int, float)):
             details.append(f"Credits balance: ${float(balance):.2f}")
+            metrics.append(AccountUsageMetric("credit_balance", float(balance)))
         elif credits.get("unlimited"):
             details.append("Credits balance: unlimited")
     return AccountUsageSnapshot(
@@ -559,6 +613,7 @@ def _fetch_codex_account_usage(
         fetched_at=_utc_now(),
         plan=_title_case_slug(payload.get("plan_type")),
         windows=tuple(windows),
+        metrics=tuple(metrics),
         details=tuple(details),
     )
 
@@ -785,6 +840,7 @@ def _fetch_anthropic_account_usage() -> Optional[AccountUsageSnapshot]:
         used = float(util) * 100 if float(util) <= 1 else float(util)
         windows.append(
             AccountUsageWindow(
+                id=key,
                 label=label,
                 used_percent=used,
                 reset_at=_parse_dt(window.get("resets_at")),
@@ -837,7 +893,9 @@ def _fetch_openrouter_account_usage(base_url: Optional[str], api_key: Optional[s
             key_data = {}
     total_credits = float(credits.get("total_credits") or 0.0)
     total_usage = float(credits.get("total_usage") or 0.0)
-    details = [f"Credits balance: ${max(0.0, total_credits - total_usage):.2f}"]
+    credit_balance = max(0.0, total_credits - total_usage)
+    details = [f"Credits balance: ${credit_balance:.2f}"]
+    metrics = [AccountUsageMetric("credit_balance", round(credit_balance, 10))]
     windows: list[AccountUsageWindow] = []
     limit = key_data.get("limit")
     limit_remaining = key_data.get("limit_remaining")
@@ -857,12 +915,14 @@ def _fetch_openrouter_account_usage(base_url: Optional[str], api_key: Optional[s
             detail_parts.append(f"resets {limit_reset}")
         windows.append(
             AccountUsageWindow(
+                id="api_key_quota",
                 label="API key quota",
                 used_percent=used_percent,
                 detail=" • ".join(detail_parts),
             )
         )
     if isinstance(usage, (int, float)):
+        metrics.append(AccountUsageMetric("api_key_usage_total", float(usage)))
         usage_parts = [f"API key usage: ${float(usage):.2f} total"]
         for value, label in (
             (key_data.get("usage_daily"), "today"),
@@ -872,12 +932,30 @@ def _fetch_openrouter_account_usage(base_url: Optional[str], api_key: Optional[s
             if isinstance(value, (int, float)) and float(value) > 0:
                 usage_parts.append(f"${float(value):.2f} {label}")
         details.append(" • ".join(usage_parts))
+    for key, name in (
+        ("usage_daily", "api_key_usage_daily"),
+        ("usage_weekly", "api_key_usage_weekly"),
+        ("usage_monthly", "api_key_usage_monthly"),
+    ):
+        value = key_data.get(key)
+        if isinstance(value, (int, float)):
+            metrics.append(AccountUsageMetric(name, float(value)))
     return AccountUsageSnapshot(
         provider="openrouter",
         source="credits_api",
         fetched_at=_utc_now(),
         windows=tuple(windows),
+        metrics=tuple(metrics),
         details=tuple(details),
+    )
+
+
+def _unavailable_account_usage(provider: str) -> AccountUsageSnapshot:
+    return AccountUsageSnapshot(
+        provider=provider,
+        source="provider_api",
+        fetched_at=_utc_now(),
+        unavailable_reason="Provider usage could not be fetched.",
     )
 
 
@@ -886,6 +964,7 @@ def fetch_account_usage(
     *,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    report_failures: bool = False,
 ) -> Optional[AccountUsageSnapshot]:
     normalized = str(provider or "").strip().lower()
     if normalized in {"", "auto", "custom"}:
@@ -897,6 +976,20 @@ def fetch_account_usage(
             return _fetch_anthropic_account_usage()
         if normalized == "openrouter":
             return _fetch_openrouter_account_usage(base_url, api_key)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            return None
+        if report_failures:
+            return _unavailable_account_usage(normalized)
+        return None
+    except AuthError as exc:
+        if is_rate_limited_auth_error(exc) or not exc.relogin_required:
+            if report_failures:
+                return _unavailable_account_usage(normalized)
+            return None
+        return None
     except Exception:
+        if report_failures:
+            return _unavailable_account_usage(normalized)
         return None
     return None

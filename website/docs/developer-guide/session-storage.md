@@ -13,8 +13,10 @@ Source file: `hermes_state.py`
 ~/.hermes/state.db (SQLite, WAL mode)
 ├── sessions              — Session metadata, token counts, billing
 ├── messages              — Full message history per session
-├── messages_fts          — FTS5 virtual table (content + tool_name + tool_calls)
-├── messages_fts_trigram  — FTS5 virtual table with trigram tokenizer (CJK / substring search)
+├── session_model_usage   - Per-model and per-task usage attribution
+├── messages_fts          - External-content FTS5 index (content + tool_name + tool_calls)
+├── messages_fts_trigram  - Optional external-content trigram index (non-tool messages)
+├── messages_fts_cjk      - Optional external-content CJK-bigram index (non-tool messages)
 ├── state_meta            — Key/value metadata table
 └── schema_version        — Single-row table tracking migration state
 ```
@@ -100,40 +102,39 @@ Notes:
 - `reasoning` stores the raw reasoning text for providers that expose it
 - Timestamps are Unix epoch floats (`time.time()`)
 
+### Per-model Usage Attribution
+
+`session_model_usage` stores usage by session, model, billing route, and task.
+The `task` value is empty for the main agent loop and names an auxiliary call such as compression or title generation.
+The composite primary key includes `task`, so auxiliary usage remains separate from the main-loop totals even when it uses the same model and billing route.
+
 ### FTS5 Full-Text Search
 
 ```sql
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
+    tool_name,
+    tool_calls,
     content=messages,
     content_rowid=id
 );
 ```
 
-The FTS5 table is kept in sync via three triggers that fire on INSERT, UPDATE,
-and DELETE of the `messages` table:
+The `messages` table is canonical; the FTS5 indexes do not store a second copy of message content.
+The standard index covers `content`, `tool_name`, and `tool_calls`.
+The trigram index uses an external-content view that excludes `role='tool'` rows, which remain searchable through the standard index.
+When the optional `cjk_unicode61` extension is available, `messages_fts_cjk` provides CJK substring matching with the same tool-row exclusion.
 
-```sql
-CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
-END;
+Triggers keep each index synchronized with `messages` on INSERT, UPDATE, and DELETE.
+During an incremental rebuild, trigger predicates use progress markers in `state_meta` so rows are neither missed nor deleted from an index before they have been backfilled.
 
-CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
-        VALUES('delete', old.id, old.content);
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
-        VALUES('delete', old.id, old.content);
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
-END;
-```
+Existing databases that still use the pre-v23 inline FTS layout retain it until the operator explicitly runs `hermes sessions optimize-storage`.
+That migration is disk-intensive and resumable; opening the database alone does not silently rebuild a large legacy index.
 
 
 ## Schema Version and Migrations
 
-Current schema version: **21**
+Current schema version: **23**
 
 The `schema_version` table stores a single integer. Simple column additions are handled declaratively by `_reconcile_columns()` (which diffs live columns against `SCHEMA_SQL` and ADDs any missing ones). The version-gated chain is reserved for data migrations and index/FTS changes that can't be expressed declaratively:
 
@@ -153,6 +154,8 @@ The `schema_version` table stores a single integer. Simple column additions are 
 | 16 | Tag delegate subagent rows in `model_config` (`$._delegate_from`) so session pickers stay clean after parent deletes orphan them |
 | 18 | Gateway metadata consolidation — backfill `display_name` / `origin_json` / `expiry_finalized` from `sessions.json` |
 | 20 | Per-model usage attribution — seed `session_model_usage` rows from historical per-session aggregate totals |
+| 22 | Add the `task` dimension to `session_model_usage` and rebuild its primary key so auxiliary usage is separated from the main agent loop |
+| 23 | Use external-content FTS indexes for fresh and optimized databases; preserve legacy inline indexes on existing databases until the opt-in storage optimization runs |
 
 Versions not listed above were declarative column additions handled by `_reconcile_columns()` (version bump only, no data migration).
 

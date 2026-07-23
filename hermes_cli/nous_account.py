@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -99,6 +100,7 @@ class NousPortalAccountInfo:
     raw_claims: Optional[dict[str, Any]] = None
     raw_account: Optional[dict[str, Any]] = None
     error: Optional[str] = None
+    error_code: Optional[str] = None
 
     @property
     def is_paid(self) -> bool:
@@ -730,7 +732,26 @@ def _error_info(
         portal_base_url=portal_base_url,
         raw_account=raw_account,
         error=str(error),
+        error_code="timeout" if _is_timeout_error(error) else None,
     )
+
+
+def _is_timeout_error(error: object) -> bool:
+    if isinstance(error, TimeoutError):
+        return True
+
+    try:
+        import httpx
+    except ImportError:
+        httpx_timeout_types = ()
+    else:
+        httpx_timeout_types = (httpx.TimeoutException,)
+
+    if httpx_timeout_types and isinstance(error, httpx_timeout_types):
+        return True
+    if isinstance(error, urllib.error.URLError):
+        return _is_timeout_error(error.reason)
+    return False
 
 
 def _portal_base_url(state: dict[str, Any]) -> Optional[str]:

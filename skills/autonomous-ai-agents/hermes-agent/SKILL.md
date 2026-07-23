@@ -178,6 +178,8 @@ hermes sessions export OUT  Export to JSONL
 hermes sessions rename ID T Rename a session
 hermes sessions delete ID   Delete a session
 hermes sessions prune       Clean up old sessions (--older-than N days)
+hermes sessions optimize-storage
+                             Migrate legacy FTS indexes to the compact v23 layout
 hermes sessions stats       Session store statistics
 ```
 
@@ -235,6 +237,8 @@ Multiple credentials per provider form a pool that rotates automatically and ski
 ### Other
 
 ```
+hermes usage [--session ID | --latest-session] [--json]
+                           Standalone session and account usage
 hermes insights [--days N]  Usage analytics
 hermes update               Update to latest version
 hermes desktop / gui        Launch the native desktop app

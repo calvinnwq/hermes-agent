@@ -126,10 +126,12 @@ class UsageModel:
 
     available: bool
     status: str = "free"
+    access: str = "unknown"
     plan_name: Optional[str] = None
     renews_at: Optional[str] = None
     renews_display: Optional[str] = None
     subscription_remaining_usd: Optional[float] = None
+    subscription_allowance_usd: Optional[float] = None
     topup_remaining_usd: Optional[float] = None
     total_spendable_usd: Optional[float] = None
     plan_bar: Optional[UsageBar] = None
@@ -155,6 +157,8 @@ def usage_model_from_account(account_info: Any) -> UsageModel:
         paid = getattr(account_info, "paid_service_access", None)
 
         sub_remaining = _finite(getattr(access, "subscription_credits_remaining", None)) if access else None
+        if sub_remaining is None and sub is not None:
+            sub_remaining = _finite(getattr(sub, "credits_remaining", None))
         topup_remaining = _finite(getattr(access, "purchased_credits_remaining", None)) if access else None
         total_usable = _finite(getattr(access, "total_usable_credits", None)) if access else None
 
@@ -162,7 +166,18 @@ def usage_model_from_account(account_info: Any) -> UsageModel:
         renews_at = getattr(sub, "current_period_end", None) if sub is not None else None
         monthly = _finite(getattr(sub, "monthly_credits", None)) if sub is not None else None
 
-        has_subscription = bool(plan_name) or (monthly is not None and monthly > 0)
+        has_subscription = bool(
+            getattr(access, "has_active_subscription", False)
+            or plan_name
+            or (monthly is not None and monthly > 0)
+        )
+        active_subscription_is_paid = getattr(
+            access, "active_subscription_is_paid", None
+        )
+        has_paid_subscription = bool(
+            has_subscription and active_subscription_is_paid is not False
+        )
+        has_topup = bool(topup_remaining and topup_remaining > 0)
 
         # Total spendable: prefer the server's total; else sum the parts we have.
         if total_usable is not None:
@@ -171,12 +186,28 @@ def usage_model_from_account(account_info: Any) -> UsageModel:
             parts = [v for v in (sub_remaining, topup_remaining) if v is not None]
             total_spendable = sum(parts) if parts else None
 
-        # Status classification.
+        # Canonical entitlement classification shared by every usage surface.
         if paid is False:
-            status = "depleted"
-        elif not has_subscription and not (topup_remaining and topup_remaining > 0):
-            # No plan and no purchased balance -> free-models-only.
+            entitlement = "depleted" if has_paid_subscription else "free"
+        elif paid is True and has_paid_subscription and has_topup:
+            entitlement = "subscription_and_topup"
+        elif paid is True and has_paid_subscription:
+            entitlement = "subscription"
+        elif paid is True and has_topup:
+            entitlement = "topup_only"
+        elif paid is None and not has_subscription and not has_topup:
+            entitlement = "free"
+        else:
+            entitlement = "unknown"
+
+        if total_spendable is None and entitlement in {"free", "depleted"}:
+            total_spendable = 0.0
+
+        # Alert status classification for the interactive billing surfaces.
+        if entitlement == "free":
             status = "free"
+        elif entitlement == "depleted":
+            status = "depleted"
         elif total_spendable is not None and total_spendable < LOW_BALANCE_THRESHOLD_USD:
             status = "low"
         else:
@@ -209,10 +240,12 @@ def usage_model_from_account(account_info: Any) -> UsageModel:
         return UsageModel(
             available=True,
             status=status,
+            access=entitlement,
             plan_name=plan_name,
             renews_at=renews_at,
             renews_display=format_renews(renews_at),
             subscription_remaining_usd=sub_remaining,
+            subscription_allowance_usd=monthly,
             topup_remaining_usd=topup_remaining,
             total_spendable_usd=total_spendable,
             plan_bar=plan_bar,
