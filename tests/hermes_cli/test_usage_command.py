@@ -10,12 +10,12 @@ from datetime import datetime, timezone
 import pytest
 
 import hermes_state
+import hermes_cli.subcommands.usage as usage
 from agent.account_usage import (
     AccountUsageMetric,
     AccountUsageSnapshot,
     AccountUsageWindow,
 )
-from hermes_cli import usage
 from hermes_cli.auth import AuthError
 from hermes_cli.nous_account import (
     NousPaidServiceAccessInfo,
@@ -879,7 +879,8 @@ def test_usage_import_does_not_load_session_db_before_profile_setup(tmp_path):
         [
             sys.executable,
             "-c",
-            "import sys; from hermes_cli import usage; print('hermes_state' in sys.modules)",
+            "import sys; from hermes_cli.subcommands import usage; "
+            "print('hermes_state' in sys.modules)",
         ],
         cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
         text=True,
