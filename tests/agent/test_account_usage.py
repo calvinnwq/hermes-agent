@@ -34,6 +34,17 @@ class _FakeClient:
         return _FakeResponse(self.payload)
 
 
+def test_metric_only_snapshot_is_available():
+    snapshot = account_usage.AccountUsageSnapshot(
+        provider="openrouter",
+        source="credits_api",
+        fetched_at=account_usage._utc_now(),
+        metrics=(account_usage.AccountUsageMetric("credit_balance", 1.0),),
+    )
+
+    assert snapshot.available is True
+
+
 @pytest.fixture
 def codex_usage_payload():
     return {

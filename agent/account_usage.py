@@ -57,7 +57,9 @@ class AccountUsageSnapshot:
 
     @property
     def available(self) -> bool:
-        return bool(self.windows or self.details) and not self.unavailable_reason
+        return bool(
+            self.windows or self.details or self.metrics
+        ) and not self.unavailable_reason
 
 
 def _title_case_slug(value: Optional[str]) -> Optional[str]:

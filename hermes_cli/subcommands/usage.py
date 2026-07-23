@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
@@ -21,7 +22,46 @@ V1_PROVIDER_METRICS = frozenset({
     "api_key_usage_weekly",
     "api_key_usage_monthly",
 })
-V1_PROVIDER_NAMES = frozenset({"openai-codex", "anthropic", "openrouter"})
+V1_ACCOUNT_PROVIDER_NAMES = frozenset({"openai-codex", "anthropic", "openrouter"})
+V1_SESSION_PROVIDER_NAMES = frozenset({
+    "nous",
+    "openai-codex",
+    "openai-api",
+    "xai-oauth",
+    "qwen-oauth",
+    "lmstudio",
+    "copilot",
+    "copilot-acp",
+    "gemini",
+    "zai",
+    "kimi-coding",
+    "kimi-coding-cn",
+    "stepfun",
+    "arcee",
+    "gmi",
+    "minimax",
+    "minimax-oauth",
+    "anthropic",
+    "alibaba",
+    "alibaba-coding-plan",
+    "minimax-cn",
+    "deepseek",
+    "xai",
+    "nvidia",
+    "opencode-zen",
+    "opencode-go",
+    "kilocode",
+    "huggingface",
+    "xiaomi",
+    "tencent-tokenhub",
+    "ollama-cloud",
+    "bedrock",
+    "azure-foundry",
+    "openrouter",
+    "custom",
+    "auto",
+})
+V1_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 V1_PLAN_NAMES = {
     "free": "Free",
     "plus": "Plus",
@@ -175,11 +215,18 @@ def _normalized_plan(value: Any) -> str | None:
     return V1_PLAN_NAMES.get(value.strip().lower())
 
 
-def _normalized_provider(value: Any) -> str | None:
+def _safe_session_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized if V1_SESSION_ID_PATTERN.fullmatch(normalized) else None
+
+
+def _normalized_session_provider(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip().lower()
-    return normalized if normalized in V1_PROVIDER_NAMES else None
+    return normalized if normalized in V1_SESSION_PROVIDER_NAMES else None
 
 
 def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
@@ -310,10 +357,10 @@ def _persisted_session(row: dict[str, Any]) -> dict[str, Any]:
     )
     result.update({
         "kind": "persisted",
-        "id": _text_or_none(row.get("id")),
+        "id": _safe_session_id(row.get("id")),
         "source": _text_or_none(row.get("source")),
         "model": _text_or_none(row.get("model")),
-        "provider": _normalized_provider(row.get("billing_provider")),
+        "provider": _normalized_session_provider(row.get("billing_provider")),
         "started_at": started_at,
         "ended_at": ended_at,
         "duration_seconds": duration,
@@ -384,9 +431,11 @@ def _collect_provider_account(
 ) -> dict[str, Any]:
     if not provider:
         return _empty_provider_account("not_configured")
-    normalized_provider = _normalized_provider(provider)
+    normalized_provider = _normalized_session_provider(provider)
     if normalized_provider is None:
-        return _empty_provider_account("unsupported")
+        return _empty_provider_account("unsupported", "unsupported")
+    if normalized_provider not in V1_ACCOUNT_PROVIDER_NAMES:
+        return _empty_provider_account("unsupported", "unsupported")
     snapshot = fetch_account_usage(normalized_provider, report_failures=True)
     if snapshot is None:
         return _empty_provider_account("unauthenticated", normalized_provider)

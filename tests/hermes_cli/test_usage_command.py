@@ -403,7 +403,23 @@ def test_provider_identifiers_are_allowlisted_for_sessions_and_accounts():
     account = usage._collect_provider_account(private_provider, [])
 
     assert account["status"] == "unsupported"
-    assert account["provider"] is None
+    assert account["provider"] == "unsupported"
+
+    known_unsupported = usage._persisted_session({"billing_provider": "deepseek"})
+    account = usage._collect_provider_account("deepseek", [])
+
+    assert known_unsupported["provider"] == "deepseek"
+    assert account["status"] == "unsupported"
+    assert account["provider"] == "unsupported"
+
+
+def test_persisted_private_session_ids_are_not_emitted():
+    private_id = "user@example.com"
+
+    session = usage._persisted_session({"id": private_id})
+
+    assert session["id"] is None
+    assert private_id not in json.dumps(session)
 
 
 def test_account_failure_is_partial_and_structured_provider_data_is_allowlisted(
