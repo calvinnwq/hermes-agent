@@ -551,9 +551,7 @@ def _usage_unavailable_report() -> dict[str, Any]:
             "provider": _empty_provider_account("unavailable"),
         },
         "warnings": [
-            _warning(
-                "usage_unavailable", "usage", "Usage reporting is unavailable."
-            )
+            _warning("usage_unavailable", "usage", "Usage reporting is unavailable.")
         ],
     }
 
