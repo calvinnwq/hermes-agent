@@ -21,6 +21,7 @@ V1_PROVIDER_METRICS = frozenset({
     "api_key_usage_weekly",
     "api_key_usage_monthly",
 })
+V1_PROVIDER_NAMES = frozenset({"openai-codex", "anthropic", "openrouter"})
 V1_PLAN_NAMES = {
     "free": "Free",
     "plus": "Plus",
@@ -174,6 +175,13 @@ def _normalized_plan(value: Any) -> str | None:
     return V1_PLAN_NAMES.get(value.strip().lower())
 
 
+def _normalized_provider(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in V1_PROVIDER_NAMES else None
+
+
 def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
     try:
         account = get_nous_portal_account_info(force_fresh=True)
@@ -305,7 +313,7 @@ def _persisted_session(row: dict[str, Any]) -> dict[str, Any]:
         "id": _text_or_none(row.get("id")),
         "source": _text_or_none(row.get("source")),
         "model": _text_or_none(row.get("model")),
-        "provider": _text_or_none(row.get("billing_provider")),
+        "provider": _normalized_provider(row.get("billing_provider")),
         "started_at": started_at,
         "ended_at": ended_at,
         "duration_seconds": duration,
@@ -376,24 +384,25 @@ def _collect_provider_account(
 ) -> dict[str, Any]:
     if not provider:
         return _empty_provider_account("not_configured")
-    if provider not in {"openai-codex", "anthropic", "openrouter"}:
-        return _empty_provider_account("unsupported", provider)
-    snapshot = fetch_account_usage(provider, report_failures=True)
+    normalized_provider = _normalized_provider(provider)
+    if normalized_provider is None:
+        return _empty_provider_account("unsupported")
+    snapshot = fetch_account_usage(normalized_provider, report_failures=True)
     if snapshot is None:
-        return _empty_provider_account("unauthenticated", provider)
-    if snapshot.unavailable_reason:
+        return _empty_provider_account("unauthenticated", normalized_provider)
+    if not snapshot.available:
         warnings.append(
             _warning(
                 "provider_unavailable",
                 "provider",
-                f"{provider} account usage is unavailable.",
+                f"{normalized_provider} account usage is unavailable.",
             )
         )
-        result = _empty_provider_account("unavailable", provider)
+        result = _empty_provider_account("unavailable", normalized_provider)
         result["fetched_at"] = _timestamp(snapshot.fetched_at.timestamp())
         return result
 
-    result = _empty_provider_account("ok", provider)
+    result = _empty_provider_account("ok", normalized_provider)
     result["plan"] = _normalized_plan(snapshot.plan)
     result["fetched_at"] = _timestamp(snapshot.fetched_at.timestamp())
     for window in snapshot.windows:

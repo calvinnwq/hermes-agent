@@ -394,6 +394,18 @@ def test_persisted_non_text_identifiers_are_null_and_json_remains_valid(
     db.close()
 
 
+def test_provider_identifiers_are_allowlisted_for_sessions_and_accounts():
+    private_provider = "private-provider/account"
+
+    assert usage._persisted_session({"billing_provider": private_provider})[
+        "provider"
+    ] is None
+    account = usage._collect_provider_account(private_provider, [])
+
+    assert account["status"] == "unsupported"
+    assert account["provider"] is None
+
+
 def test_account_failure_is_partial_and_structured_provider_data_is_allowlisted(
     monkeypatch, capsys
 ):
@@ -863,6 +875,7 @@ def test_json_mode_suppresses_dependency_stdout(monkeypatch, capsys):
         provider="openrouter",
         source="credits_api",
         fetched_at=datetime.now(timezone.utc),
+        windows=(AccountUsageWindow(label="API key quota", used_percent=10.0),),
     )
     monkeypatch.setattr(usage, "_resolve_configured_provider", lambda: "openrouter")
     monkeypatch.setattr(
@@ -887,6 +900,39 @@ def test_json_mode_suppresses_dependency_stdout(monkeypatch, capsys):
     assert (code, err) == (0, "")
     assert report["schema_version"] == 1
     assert report["accounts"]["provider"]["status"] == "ok"
+
+
+def test_empty_provider_snapshot_is_unavailable_with_warning(monkeypatch, capsys):
+    snapshot = AccountUsageSnapshot(
+        provider="openrouter",
+        source="credits_api",
+        fetched_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(usage, "_resolve_configured_provider", lambda: "openrouter")
+    monkeypatch.setattr(
+        usage,
+        "fetch_account_usage",
+        lambda provider, report_failures=True: snapshot,
+    )
+    monkeypatch.setattr(
+        usage,
+        "_collect_nous_account",
+        lambda warnings: usage._empty_nous_account(),
+    )
+
+    code, report, err = _run_json(
+        argparse.Namespace(json=True, session=None, latest_session=False), capsys
+    )
+
+    assert (code, err) == (0, "")
+    assert report["accounts"]["provider"]["status"] == "unavailable"
+    assert report["warnings"] == [
+        {
+            "code": "provider_unavailable",
+            "source": "provider",
+            "message": "openrouter account usage is unavailable.",
+        }
+    ]
 
 
 def test_local_session_failure_is_sanitized_and_operational(monkeypatch, capsys):
