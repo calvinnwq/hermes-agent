@@ -178,6 +178,8 @@ hermes sessions export OUT  Export to JSONL
 hermes sessions rename ID T Rename a session
 hermes sessions delete ID   Delete a session
 hermes sessions prune       Clean up old sessions (--older-than N days)
+hermes sessions optimize-storage
+                             Migrate legacy FTS indexes to the compact v23 layout
 hermes sessions stats       Session store statistics
 ```
 
