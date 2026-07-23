@@ -568,6 +568,32 @@ def test_nous_structured_timeout_uses_timeout_warning(monkeypatch):
     ]
 
 
+def test_nous_structured_timeout_precedes_logged_out_status(monkeypatch):
+    monkeypatch.setattr(
+        usage,
+        "get_nous_portal_account_info",
+        lambda force_fresh=True: NousPortalAccountInfo(
+            logged_in=False,
+            source="error",
+            fresh=False,
+            error="private timeout detail",
+            error_code="timeout",
+        ),
+    )
+    warnings = []
+
+    result = usage._collect_nous_account(warnings)
+
+    assert result["status"] == "unavailable"
+    assert warnings == [
+        {
+            "code": "nous_timeout",
+            "source": "nous",
+            "message": "Nous Portal usage timed out.",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("paid", "has_subscription", "topup", "expected_access", "expected_status"),
     [

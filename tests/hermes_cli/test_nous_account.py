@@ -8,6 +8,7 @@ import time
 import urllib.error
 from typing import Any
 
+import httpx
 import pytest
 
 from hermes_cli.nous_account import (
@@ -302,6 +303,30 @@ def test_force_fresh_preserves_structured_timeout_error(monkeypatch):
             urllib.error.URLError(TimeoutError("timed out"))
         ),
     )
+
+    info = get_nous_portal_account_info(force_fresh=True)
+
+    assert info.logged_in is True
+    assert info.source == "error"
+    assert info.error_code == "timeout"
+
+
+def test_force_fresh_preserves_httpx_refresh_timeout(monkeypatch):
+    token = _jwt(
+        {
+            "sub": "user_123",
+            "org_id": "org_123",
+            "exp": int(time.time()) + 900,
+        }
+    )
+    monkeypatch.setattr(
+        "hermes_cli.auth.get_provider_auth_state", lambda provider: _state(token)
+    )
+
+    def raise_timeout():
+        raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr("hermes_cli.auth.resolve_nous_access_token", raise_timeout)
 
     info = get_nous_portal_account_info(force_fresh=True)
 

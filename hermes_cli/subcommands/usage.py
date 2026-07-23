@@ -187,6 +187,11 @@ def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
             _warning("nous_unavailable", "nous", "Nous Portal usage is unavailable.")
         )
         return _empty_nous_account("unavailable")
+    if getattr(account, "error_code", None) == "timeout":
+        warnings.append(
+            _warning("nous_timeout", "nous", "Nous Portal usage timed out.")
+        )
+        return _empty_nous_account("unavailable")
     if not account.logged_in:
         if (
             account.source == "inference_key"
@@ -202,11 +207,6 @@ def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
             return _empty_nous_account("unavailable")
         return _empty_nous_account("not_connected")
     if account.error:
-        if getattr(account, "error_code", None) == "timeout":
-            warnings.append(
-                _warning("nous_timeout", "nous", "Nous Portal usage timed out.")
-            )
-            return _empty_nous_account("unavailable")
         warnings.append(
             _warning("nous_unavailable", "nous", "Nous Portal usage is unavailable.")
         )
