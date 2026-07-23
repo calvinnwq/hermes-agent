@@ -12,7 +12,6 @@ from agent.anthropic_adapter import _is_oauth_token, resolve_anthropic_token
 from hermes_cli.auth import (
     AuthError,
     _decode_jwt_claims,
-    _read_codex_tokens,
     is_rate_limited_auth_error,
     resolve_codex_runtime_credentials,
 )
@@ -513,17 +512,6 @@ def _resolve_codex_usage_credentials(
     try:
         creds = resolve_codex_runtime_credentials(refresh_if_expiring=True)
         account_id = _codex_account_id_from_token(creds["api_key"])
-        try:
-            token_data = _read_codex_tokens()
-            tokens = token_data.get("tokens") or {}
-            account_id = (
-                str(tokens.get("account_id", "") or "").strip()
-                or account_id
-            )
-        except AuthError:
-            logger.debug(
-                "codex ▸ /usage account_id read failed (best-effort)", exc_info=True
-            )
         return (
             creds["api_key"],
             str(creds.get("base_url", "") or "").strip(),

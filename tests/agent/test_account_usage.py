@@ -154,23 +154,63 @@ def test_codex_usage_derives_account_id_from_resolved_pool_token(
             "source": "credential_pool",
         },
     )
-    monkeypatch.setattr(
-        account_usage,
-        "_read_codex_tokens",
-        lambda: (_ for _ in ()).throw(
-            account_usage.AuthError(
-                "pool-only credentials",
-                provider="openai-codex",
-                code="codex_auth_missing",
-                relogin_required=True,
-            )
-        ),
-    )
-
     snapshot = account_usage.fetch_account_usage("openai-codex")
 
     assert snapshot is not None
     assert calls[0]["headers"]["ChatGPT-Account-Id"] == "acct_resolved_pool_456"
+
+
+def test_codex_usage_keeps_account_id_coupled_to_resolved_token(
+    monkeypatch, codex_usage_payload
+):
+    calls = []
+    monkeypatch.setattr(
+        account_usage.httpx,
+        "Client",
+        lambda timeout: _FakeClient(calls, codex_usage_payload),
+    )
+    resolved_token = _codex_jwt("acct_token")
+    monkeypatch.setattr(
+        account_usage,
+        "resolve_codex_runtime_credentials",
+        lambda **kwargs: {
+            "api_key": resolved_token,
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "source": "hermes-auth-store",
+        },
+    )
+    snapshot = account_usage.fetch_account_usage("openai-codex")
+
+    assert snapshot is not None
+    assert calls[0]["headers"]["Authorization"] == f"Bearer {resolved_token}"
+    assert calls[0]["headers"]["ChatGPT-Account-Id"] == "acct_token"
+
+
+def test_codex_usage_omits_unproven_account_id_for_opaque_token(
+    monkeypatch, codex_usage_payload
+):
+    calls = []
+    monkeypatch.setattr(
+        account_usage.httpx,
+        "Client",
+        lambda timeout: _FakeClient(calls, codex_usage_payload),
+    )
+    monkeypatch.setattr(
+        account_usage,
+        "resolve_codex_runtime_credentials",
+        lambda **kwargs: {
+            "api_key": "opaque-token-without-account-claim",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "source": "hermes-auth-store",
+        },
+    )
+    snapshot = account_usage.fetch_account_usage("openai-codex")
+
+    assert snapshot is not None
+    assert calls[0]["headers"]["Authorization"] == (
+        "Bearer opaque-token-without-account-claim"
+    )
+    assert "ChatGPT-Account-Id" not in calls[0]["headers"]
 
 
 def test_codex_usage_does_not_swap_to_pool_on_transient_resolver_error(monkeypatch, codex_usage_payload):
@@ -205,48 +245,6 @@ def test_codex_usage_does_not_swap_to_pool_on_transient_resolver_error(monkeypat
 
     assert snapshot is None
     assert calls == []  # HTTP usage endpoint never hit with a wrong-account token
-
-
-def test_codex_usage_account_id_read_failure_keeps_singleton_token(monkeypatch, codex_usage_payload):
-    """When the resolver succeeds but the separate account_id read raises, the
-    working singleton token must still be used (best-effort account_id), NOT
-    abandoned in favor of a header-less pool credential."""
-    calls = []
-    monkeypatch.setattr(
-        account_usage.httpx,
-        "Client",
-        lambda timeout: _FakeClient(calls, codex_usage_payload),
-    )
-    monkeypatch.setattr(
-        account_usage,
-        "resolve_codex_runtime_credentials",
-        lambda **kwargs: {
-            "api_key": "singleton-token",
-            "base_url": "https://chatgpt.com/backend-api/codex",
-        },
-    )
-    monkeypatch.setattr(
-        account_usage,
-        "_read_codex_tokens",
-        lambda *a, **k: (_ for _ in ()).throw(
-            account_usage.AuthError("partial store", provider="openai-codex", code="codex_auth_invalid_shape")
-        ),
-    )
-
-    import agent.credential_pool as credential_pool
-
-    monkeypatch.setattr(
-        credential_pool,
-        "load_pool",
-        lambda provider: (_ for _ in ()).throw(AssertionError("pool must not be consulted")),
-    )
-
-    snapshot = account_usage.fetch_account_usage("openai-codex")
-
-    assert snapshot is not None
-    assert calls[0]["headers"]["Authorization"] == "Bearer singleton-token"
-    # account_id read failed → header omitted, but the singleton token is kept.
-    assert "ChatGPT-Account-Id" not in calls[0]["headers"]
 
 
 def test_codex_usage_treats_wham_used_percent_as_used_not_remaining(monkeypatch):

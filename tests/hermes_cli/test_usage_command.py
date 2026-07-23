@@ -300,6 +300,100 @@ def test_persisted_session_uses_durable_counters_and_latest_main_route(
     db.close()
 
 
+@pytest.mark.parametrize(
+    ("api_calls", "input_tokens"),
+    [
+        ("not-a-number", "private text"),
+        (float("inf"), float("-inf")),
+    ],
+)
+def test_persisted_invalid_numeric_counters_are_null(
+    tmp_path, monkeypatch, capsys, api_calls, input_tokens
+):
+    db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
+    db.create_session("invalid-counters", source="cli")
+    assert db._conn is not None
+    db._conn.execute(
+        "UPDATE sessions SET api_call_count = ?, input_tokens = ? WHERE id = ?",
+        (api_calls, input_tokens, "invalid-counters"),
+    )
+    monkeypatch.setattr(hermes_state, "SessionDB", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    monkeypatch.setattr(
+        usage,
+        "_collect_provider_account",
+        lambda provider, warnings: usage._empty_provider_account("ok", provider),
+    )
+    monkeypatch.setattr(
+        usage, "_collect_nous_account", lambda warnings: usage._empty_nous_account()
+    )
+
+    code, report, err = _run_json(
+        argparse.Namespace(
+            json=True, session="invalid-counters", latest_session=False
+        ),
+        capsys,
+    )
+
+    assert (code, err) == (0, "")
+    assert report["session"]["api_calls"] is None
+    assert report["session"]["tokens"]["input"] is None
+    db.close()
+
+
+def test_persisted_non_text_identifiers_are_null_and_json_remains_valid(
+    monkeypatch, tmp_path, capsys
+):
+    db = hermes_state.SessionDB(db_path=tmp_path / "state.db")
+    db.create_session("invalid-identifiers", source="cli")
+    db.append_message("invalid-identifiers", "user", "hello")
+    assert db._conn is not None
+    db._conn.execute(
+        """
+        UPDATE sessions
+        SET source = ?, model = ?
+        WHERE id = ?
+        """,
+        (
+            b"invalid-source",
+            b"invalid-model",
+            "invalid-identifiers",
+        ),
+    )
+    monkeypatch.setattr(
+        db,
+        "get_latest_main_model_usage",
+        lambda session_id: {
+            "model": b"invalid-route-model",
+            "billing_provider": b"invalid-provider",
+        },
+    )
+    monkeypatch.setattr(hermes_state, "SessionDB", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    monkeypatch.setattr(
+        usage,
+        "_collect_provider_account",
+        lambda provider, warnings: usage._empty_provider_account("ok", provider),
+    )
+    monkeypatch.setattr(
+        usage, "_collect_nous_account", lambda warnings: usage._empty_nous_account()
+    )
+
+    code, report, err = _run_json(
+        argparse.Namespace(json=True, session=None, latest_session=True),
+        capsys,
+    )
+
+    assert (code, err) == (0, "")
+    assert report["session"]["status"] == "ok"
+    assert report["session"]["id"] == "invalid-identifiers"
+    assert report["session"]["source"] is None
+    assert report["session"]["model"] is None
+    assert report["session"]["provider"] is None
+    assert usage._persisted_session({"id": b"invalid-id"})["id"] is None
+    db.close()
+
+
 def test_account_failure_is_partial_and_structured_provider_data_is_allowlisted(
     monkeypatch, capsys
 ):
@@ -385,6 +479,42 @@ def test_account_failure_is_partial_and_structured_provider_data_is_allowlisted(
     assert all(value not in err for value in forbidden)
 
 
+def test_external_plan_names_are_allowlisted(monkeypatch):
+    private_plan = "user@example.com /private/path org-private"
+    snapshot = AccountUsageSnapshot(
+        provider="openrouter",
+        source="credits_api",
+        fetched_at=datetime.now(timezone.utc),
+        plan=private_plan,
+    )
+    monkeypatch.setattr(
+        usage,
+        "fetch_account_usage",
+        lambda provider, report_failures=True: snapshot,
+    )
+    account = NousPortalAccountInfo(
+        logged_in=True,
+        source="account_api",
+        fresh=True,
+        subscription=NousPortalSubscriptionInfo(plan=private_plan),
+        paid_service_access=False,
+        paid_service_access_info=NousPaidServiceAccessInfo(
+            paid_access=False,
+            total_usable_credits=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        usage, "get_nous_portal_account_info", lambda force_fresh=True: account
+    )
+
+    provider = usage._collect_provider_account("openrouter", [])
+    nous = usage._collect_nous_account([])
+
+    assert provider["plan"] is None
+    assert nous["plan"] is None
+    assert private_plan not in json.dumps({"provider": provider, "nous": nous})
+
+
 def test_logged_out_nous_error_is_unavailable_with_a_sanitized_warning(monkeypatch):
     sentinel = "private/path user@example.com"
     monkeypatch.setattr(
@@ -410,6 +540,32 @@ def test_logged_out_nous_error_is_unavailable_with_a_sanitized_warning(monkeypat
         }
     ]
     assert sentinel not in json.dumps({"account": result, "warnings": warnings})
+
+
+def test_nous_structured_timeout_uses_timeout_warning(monkeypatch):
+    monkeypatch.setattr(
+        usage,
+        "get_nous_portal_account_info",
+        lambda force_fresh=True: NousPortalAccountInfo(
+            logged_in=True,
+            source="error",
+            fresh=False,
+            error="private timeout detail",
+            error_code="timeout",
+        ),
+    )
+    warnings = []
+
+    result = usage._collect_nous_account(warnings)
+
+    assert result["status"] == "unavailable"
+    assert warnings == [
+        {
+            "code": "nous_timeout",
+            "source": "nous",
+            "message": "Nous Portal usage timed out.",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -533,6 +689,52 @@ def test_nous_active_free_plan_is_not_depleted(monkeypatch):
     result = usage._collect_nous_account([])
 
     assert result["access"] == "free"
+
+
+def test_nous_account_serializes_the_shared_usage_model(monkeypatch):
+    from agent.billing_usage import UsageBar, UsageModel
+
+    account = NousPortalAccountInfo(
+        logged_in=True,
+        source="account_api",
+        fresh=True,
+        paid_service_access=False,
+    )
+    model = UsageModel(
+        available=True,
+        status="healthy",
+        access="subscription_and_topup",
+        plan_name="Pro",
+        renews_at="2026-08-01T00:00:00Z",
+        subscription_remaining_usd=40.0,
+        subscription_allowance_usd=100.0,
+        topup_remaining_usd=5.0,
+        total_spendable_usd=45.0,
+        plan_bar=UsageBar(
+            kind="plan",
+            remaining_usd=40.0,
+            total_usd=100.0,
+            spent_usd=60.0,
+        ),
+    )
+    monkeypatch.setattr(
+        usage, "get_nous_portal_account_info", lambda force_fresh=True: account
+    )
+    monkeypatch.setattr(
+        "agent.billing_usage.usage_model_from_account", lambda value: model
+    )
+
+    result = usage._collect_nous_account([])
+
+    assert result["access"] == "subscription_and_topup"
+    assert result["subscription"] == {
+        "remaining_usd": 40.0,
+        "allowance_usd": 100.0,
+        "used_percent": 60.0,
+        "renews_at": "2026-08-01T00:00:00Z",
+    }
+    assert result["topup"]["remaining_usd"] == 5.0
+    assert result["total_spendable_usd"] == 45.0
 
 
 def test_nous_account_helper_can_resolve_credential_pool_auth(monkeypatch):
@@ -718,6 +920,23 @@ def test_unexpected_handler_failure_still_emits_one_sanitized_json_envelope(
     assert sentinel not in json.dumps(report)
 
 
+def test_final_json_serialization_failure_emits_sanitized_envelope(monkeypatch, capsys):
+    monkeypatch.setattr(
+        usage,
+        "collect_usage",
+        lambda **kwargs: ({"private": float("inf")}, 0),
+    )
+
+    code, report, err = _run_json(
+        argparse.Namespace(json=True, session=None, latest_session=False), capsys
+    )
+
+    assert (code, err) == (1, "")
+    assert report["schema_version"] == 1
+    assert report["session"]["status"] == "unavailable"
+    assert report["warnings"][0]["code"] == "usage_unavailable"
+
+
 def test_runtime_provider_resolution_failure_is_a_sanitized_local_failure(
     monkeypatch, capsys
 ):
@@ -880,7 +1099,10 @@ def test_usage_import_does_not_load_session_db_before_profile_setup(tmp_path):
             sys.executable,
             "-c",
             "import sys; from hermes_cli.subcommands import usage; "
-            "print('hermes_state' in sys.modules)",
+            "print('hermes_state' in sys.modules, "
+            "'agent.account_usage' in sys.modules, "
+            "'hermes_cli.nous_account' in sys.modules, "
+            "'httpx' in sys.modules)",
         ],
         cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
         text=True,
@@ -892,4 +1114,4 @@ def test_usage_import_does_not_load_session_db_before_profile_setup(tmp_path):
 
     assert completed.returncode == 0
     assert completed.stderr == ""
-    assert completed.stdout == "False\n"
+    assert completed.stdout == "False False False False\n"

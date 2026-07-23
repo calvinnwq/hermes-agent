@@ -8,10 +8,10 @@ import sys
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from agent.account_usage import fetch_account_usage
-from hermes_cli.nous_account import get_nous_portal_account_info
+if TYPE_CHECKING:
+    from agent.account_usage import AccountUsageSnapshot
 
 SCHEMA_VERSION = 1
 V1_PROVIDER_METRICS = frozenset({
@@ -21,6 +21,36 @@ V1_PROVIDER_METRICS = frozenset({
     "api_key_usage_weekly",
     "api_key_usage_monthly",
 })
+V1_PLAN_NAMES = {
+    "free": "Free",
+    "plus": "Plus",
+    "pro": "Pro",
+    "super": "Super",
+    "ultra": "Ultra",
+    "team": "Team",
+    "business": "Business",
+    "enterprise": "Enterprise",
+    "max": "Max",
+    "payg": "payg",
+    "usage based": "Usage Based",
+    "usage_based": "Usage Based",
+}
+
+
+def fetch_account_usage(*args, **kwargs) -> AccountUsageSnapshot | None:
+    """Load account providers only when the usage command executes."""
+    from agent.account_usage import fetch_account_usage as _fetch_account_usage
+
+    return _fetch_account_usage(*args, **kwargs)
+
+
+def get_nous_portal_account_info(*args, **kwargs):
+    """Load Nous account helpers only when the usage command executes."""
+    from hermes_cli.nous_account import (
+        get_nous_portal_account_info as _get_nous_portal_account_info,
+    )
+
+    return _get_nous_portal_account_info(*args, **kwargs)
 
 
 def build_usage_parser(subparsers, *, cmd_usage_handler=None):
@@ -138,6 +168,12 @@ def _warning(code: str, source: str, message: str) -> dict[str, str]:
     return {"code": code, "source": source, "message": message}
 
 
+def _normalized_plan(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return V1_PLAN_NAMES.get(value.strip().lower())
+
+
 def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
     try:
         account = get_nous_portal_account_info(force_fresh=True)
@@ -166,88 +202,65 @@ def _collect_nous_account(warnings: list[dict[str, str]]) -> dict[str, Any]:
             return _empty_nous_account("unavailable")
         return _empty_nous_account("not_connected")
     if account.error:
+        if getattr(account, "error_code", None) == "timeout":
+            warnings.append(
+                _warning("nous_timeout", "nous", "Nous Portal usage timed out.")
+            )
+            return _empty_nous_account("unavailable")
         warnings.append(
             _warning("nous_unavailable", "nous", "Nous Portal usage is unavailable.")
         )
         return _empty_nous_account("unavailable")
 
-    result = _empty_nous_account("ok")
+    from agent.billing_usage import usage_model_from_account
+
+    model = usage_model_from_account(account)
+    if not model.available:
+        warnings.append(
+            _warning("nous_unavailable", "nous", "Nous Portal usage is unavailable.")
+        )
+        return _empty_nous_account("unavailable")
+
+    result = _empty_nous_account("partial" if model.access == "unknown" else "ok")
     result["fetched_at"] = _rfc3339_utc_now()
-    subscription = account.subscription
-    access_info = account.paid_service_access_info
-    allowance = getattr(subscription, "monthly_credits", None)
-    remaining = getattr(access_info, "subscription_credits_remaining", None)
-    if remaining is None:
-        remaining = getattr(subscription, "credits_remaining", None)
-    topup = getattr(access_info, "purchased_credits_remaining", None)
-    total = getattr(access_info, "total_usable_credits", None)
-    has_subscription = bool(
-        getattr(access_info, "has_active_subscription", False)
-        or (isinstance(allowance, (int, float)) and allowance > 0)
-    )
-    active_subscription_is_paid = getattr(
-        access_info, "active_subscription_is_paid", None
-    )
-    has_topup = isinstance(topup, (int, float)) and topup > 0
-
-    if has_subscription and has_topup:
-        access = (
-            "subscription_and_topup"
-            if active_subscription_is_paid is not False
-            else "topup_only"
-        )
-    elif has_subscription and account.paid_service_access is True:
-        access = "subscription"
-    elif has_topup:
-        access = "topup_only"
-    elif account.paid_service_access is False:
-        access = (
-            "free"
-            if not has_subscription or active_subscription_is_paid is False
-            else "depleted"
-        )
-    else:
-        access = "unknown"
-        result["status"] = "partial"
-
-    result["access"] = access
-    result["plan"] = getattr(subscription, "plan", None)
-    result["subscription"]["remaining_usd"] = _finite_number(remaining)
-    result["subscription"]["allowance_usd"] = _finite_number(allowance)
+    result["access"] = model.access
+    result["plan"] = _normalized_plan(model.plan_name)
+    result["subscription"]["remaining_usd"] = model.subscription_remaining_usd
+    result["subscription"]["allowance_usd"] = model.subscription_allowance_usd
     if (
-        result["subscription"]["allowance_usd"] is not None
-        and result["subscription"]["allowance_usd"] > 0
-        and result["subscription"]["remaining_usd"] is not None
-        and result["subscription"]["remaining_usd"]
-        <= result["subscription"]["allowance_usd"]
+        model.plan_bar is not None
+        and model.subscription_remaining_usd is not None
+        and model.subscription_allowance_usd is not None
+        and model.subscription_remaining_usd <= model.subscription_allowance_usd
+        and model.plan_bar.total_usd > 0
     ):
-        used = (
-            1
-            - result["subscription"]["remaining_usd"]
-            / result["subscription"]["allowance_usd"]
-        ) * 100
+        used = model.plan_bar.spent_usd / model.plan_bar.total_usd * 100
         result["subscription"]["used_percent"] = min(100.0, max(0.0, used))
-    result["subscription"]["renews_at"] = _rfc3339_timestamp(
-        getattr(subscription, "current_period_end", None)
-    )
-    result["topup"]["remaining_usd"] = _finite_number(topup)
-    result["total_spendable_usd"] = _finite_number(total)
-    if result["total_spendable_usd"] is None:
-        amounts = (
-            result["subscription"]["remaining_usd"],
-            result["topup"]["remaining_usd"],
-        )
-        if any(value is not None for value in amounts):
-            result["total_spendable_usd"] = sum(value or 0.0 for value in amounts)
-    if result["total_spendable_usd"] is None and access in {"free", "depleted"}:
-        result["total_spendable_usd"] = 0.0
+    result["subscription"]["renews_at"] = _rfc3339_timestamp(model.renews_at)
+    result["topup"]["remaining_usd"] = model.topup_remaining_usd
+    result["total_spendable_usd"] = model.total_spendable_usd
     return result
 
 
 def _finite_number(value: Any) -> float | None:
-    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+    if (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    ):
         return float(value)
     return None
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    number = _finite_number(value)
+    if number is None or number < 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _text_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _timestamp(value: Any) -> str | None:
@@ -260,7 +273,7 @@ def _timestamp(value: Any) -> str | None:
             .isoformat()
             .replace("+00:00", "Z")
         )
-    except (TypeError, ValueError, OSError):
+    except (TypeError, ValueError, OSError, OverflowError):
         return None
 
 
@@ -280,25 +293,29 @@ def _persisted_session(row: dict[str, Any]) -> dict[str, Any]:
     result = _empty_session("ok")
     started_at = _timestamp(row.get("started_at"))
     ended_at = _timestamp(row.get("ended_at"))
-    duration = None
-    if row.get("started_at") is not None and row.get("ended_at") is not None:
-        duration = max(0.0, float(row["ended_at"]) - float(row["started_at"]))
+    started_number = _finite_number(row.get("started_at"))
+    ended_number = _finite_number(row.get("ended_at"))
+    duration = (
+        max(0.0, ended_number - started_number)
+        if started_number is not None and ended_number is not None
+        else None
+    )
     result.update({
         "kind": "persisted",
-        "id": row.get("id"),
-        "source": row.get("source"),
-        "model": row.get("model"),
-        "provider": row.get("billing_provider"),
+        "id": _text_or_none(row.get("id")),
+        "source": _text_or_none(row.get("source")),
+        "model": _text_or_none(row.get("model")),
+        "provider": _text_or_none(row.get("billing_provider")),
         "started_at": started_at,
         "ended_at": ended_at,
         "duration_seconds": duration,
-        "message_count": row.get("message_count"),
-        "api_calls": row.get("api_call_count"),
+        "message_count": _nonnegative_int(row.get("message_count")),
+        "api_calls": _nonnegative_int(row.get("api_call_count")),
     })
     result["tokens"].update({
-        "input": row.get("input_tokens"),
-        "output": row.get("output_tokens"),
-        "reasoning": row.get("reasoning_tokens"),
+        "input": _nonnegative_int(row.get("input_tokens")),
+        "output": _nonnegative_int(row.get("output_tokens")),
+        "reasoning": _nonnegative_int(row.get("reasoning_tokens")),
     })
     return result
 
@@ -377,7 +394,7 @@ def _collect_provider_account(
         return result
 
     result = _empty_provider_account("ok", provider)
-    result["plan"] = snapshot.plan
+    result["plan"] = _normalized_plan(snapshot.plan)
     result["fetched_at"] = _timestamp(snapshot.fetched_at.timestamp())
     for window in snapshot.windows:
         used = window.used_percent
@@ -524,6 +541,23 @@ def _display(value: Any) -> str:
     return "unknown" if value is None else f"{value:,}"
 
 
+def _usage_unavailable_report() -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _rfc3339_utc_now(),
+        "session": _empty_session("unavailable"),
+        "accounts": {
+            "nous": _empty_nous_account("unavailable"),
+            "provider": _empty_provider_account("unavailable"),
+        },
+        "warnings": [
+            _warning(
+                "usage_unavailable", "usage", "Usage reporting is unavailable."
+            )
+        ],
+    }
+
+
 def _run_usage_command(args) -> tuple[dict[str, Any], int]:
     try:
         return collect_usage(
@@ -531,30 +565,24 @@ def _run_usage_command(args) -> tuple[dict[str, Any], int]:
             latest_session=bool(getattr(args, "latest_session", False)),
         )
     except Exception:
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "generated_at": _rfc3339_utc_now(),
-            "session": _empty_session("unavailable"),
-            "accounts": {
-                "provider": _empty_provider_account("unavailable"),
-                "nous": _empty_nous_account("unavailable"),
-            },
-            "warnings": [
-                _warning(
-                    "usage_unavailable", "usage", "Usage reporting is unavailable."
-                )
-            ],
-        }, 1
+        return _usage_unavailable_report(), 1
 
 
 def cmd_usage(args) -> None:
+    rendered = ""
     if args.json:
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             report, exit_code = _run_usage_command(args)
+            try:
+                rendered = json.dumps(report, allow_nan=False)
+            except Exception:
+                report = _usage_unavailable_report()
+                exit_code = 1
+                rendered = json.dumps(report, allow_nan=False)
     else:
         report, exit_code = _run_usage_command(args)
     if args.json:
-        print(json.dumps(report, allow_nan=False))
+        print(rendered)
     else:
         print(render_human(report))
         if exit_code == 1:

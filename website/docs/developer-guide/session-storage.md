@@ -133,7 +133,7 @@ END;
 
 ## Schema Version and Migrations
 
-Current schema version: **22**
+Current schema version: **23**
 
 The `schema_version` table stores a single integer. Simple column additions are handled declaratively by `_reconcile_columns()` (which diffs live columns against `SCHEMA_SQL` and ADDs any missing ones). The version-gated chain is reserved for data migrations and index/FTS changes that can't be expressed declaratively:
 
@@ -154,6 +154,7 @@ The `schema_version` table stores a single integer. Simple column additions are 
 | 18 | Gateway metadata consolidation — backfill `display_name` / `origin_json` / `expiry_finalized` from `sessions.json` |
 | 20 | Per-model usage attribution — seed `session_model_usage` rows from historical per-session aggregate totals |
 | 22 | Add the `task` dimension to `session_model_usage` and rebuild its primary key so auxiliary usage is separated from the main agent loop |
+| 23 | Redesign FTS storage so message content is stored once while preserving recovery for legacy inline FTS tables |
 
 Versions not listed above were declarative column additions handled by `_reconcile_columns()` (version bump only, no data migration).
 

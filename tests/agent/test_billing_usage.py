@@ -22,6 +22,8 @@ class _Access:
     subscription_credits_remaining: Optional[float] = None
     purchased_credits_remaining: Optional[float] = None
     total_usable_credits: Optional[float] = None
+    has_active_subscription: Optional[bool] = None
+    active_subscription_is_paid: Optional[bool] = None
 
 
 @dataclass
@@ -29,6 +31,7 @@ class _Sub:
     plan: Optional[str] = None
     monthly_credits: Optional[float] = None
     current_period_end: Optional[str] = None
+    credits_remaining: Optional[float] = None
 
 
 @dataclass
@@ -83,6 +86,45 @@ def test_status_classification(account, expected):
 
 def test_threshold_constant_is_five():
     assert LOW_BALANCE_THRESHOLD_USD == 5.0
+
+
+def test_active_free_subscription_is_canonically_free():
+    model = usage_model_from_account(
+        _acct(
+            paid_service_access=False,
+            subscription=_Sub(plan="Free", monthly_credits=100.0),
+            paid_service_access_info=_Access(
+                subscription_credits_remaining=40.0,
+                total_usable_credits=40.0,
+                has_active_subscription=True,
+                active_subscription_is_paid=False,
+            ),
+        )
+    )
+
+    assert model.status == "free"
+    assert model.access == "free"
+    assert model.subscription_allowance_usd == 100.0
+
+
+def test_subscription_remaining_falls_back_to_subscription_snapshot():
+    model = usage_model_from_account(
+        _acct(
+            paid_service_access=True,
+            subscription=_Sub(
+                plan="Plus",
+                monthly_credits=20.0,
+                credits_remaining=14.0,
+            ),
+            paid_service_access_info=_Access(
+                has_active_subscription=True,
+                active_subscription_is_paid=True,
+            ),
+        )
+    )
+
+    assert model.subscription_remaining_usd == 14.0
+    assert model.total_spendable_usd == 14.0
 
 
 def test_healthy_carries_plan_name_and_renewal():
